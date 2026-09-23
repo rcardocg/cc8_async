@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Test WebSocket TCP-Like</title>
+</head>
+<body>
+    <h3>Prueba del Protocolo WebSocket (Slow Start y Ventanas)</h3>
+    <div id="log" style="font-family: monospace; background: #f4f4f4; padding: 10px; max-height: 400px; overflow-y: auto;"></div>
+
+    <script>
+        const logDiv = document.getElementById("log");
+        function log(message) { logDiv.innerHTML += `<p style="margin: 2px 0;">${message}</p>`; logDiv.scrollTop = logDiv.scrollHeight; }
+
+        const ws = new WebSocket("ws://localhost:8081/ws/tiles");
+
+        ws.onopen = () => {
+            log("--- Conexión establecida.");
+            
+            // Pedimos una ráfaga grande de 8 tiles de un solo golpe
+            const request = {
+                action: "fetch_tiles",
+                imageId: "galaxia_gigapixel_01",
+                tiles: [
+                    {x: 0, y: 0}, {x: 1, y: 0}, {x: 2, y: 0}, {x: 3, y: 0},
+                    {x: 0, y: 1}, {x: 1, y: 1}, {x: 2, y: 1}, {x: 3, y: 1}
+                ]
+            };
+            log("/-/-/-/ Solicitando 8 tiles al servidor...");
+            ws.send(JSON.stringify(request));
+        };
+
+        ws.onmessage = (event) => {
+            const response = JSON.parse(event.data);
+            log(`----><---- Recibido tile_data: <b>${response.tile_id}</b>`);
+            
+            // Cuando recibimos un tile, simulamos que lo procesamos y enviamos el ACK al servidor
+            if (response.action === "tile_data") {
+                setTimeout(() => {
+                    const ack = {
+                        action: "ack_tile",
+                        tile_id: response.tile_id,
+                        latency_ms: Math.floor(Math.random() * 50) + 10 // Latencia baja simulada (10-60ms)
+                    };
+                    log(`----><---- Enviando ACK confirmando recepción de ${response.tile_id}...`);
+                    ws.send(JSON.stringify(ack));
+                }, 800); // Retraso de 0.8 segundos para que puedas ver el efecto visualmente
+            }
+        };
+
+        ws.onerror = () => log("---X---Error en la conexión.");
+        ws.onclose = () => log("<---> Conexión cerrada.");
+    </script>
+</body>
+</html>
