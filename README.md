@@ -1,379 +1,109 @@
-# Propuesta de Protocolos
-## Servidor de Imágenes Ultra Alta Resolución
+# Servidor asíncrono de imágenes — CC8
 
-**Estudiantes:** Ricardo Caballeros / Cristian Sactic
-**Proyecto:** Servidor Asíncrono Java - Gestión de Imágenes Gigapíxel  
-**Estado:** Propuesta en revisión
+Servidor Java 21 / Spring Boot 3.2.4 para explorar regiones de imágenes mediante
+HTTP inicial y un protocolo propio de control de tiles sobre WebSocket (**GTP/1**).
+Autores registrados en la propuesta original: Ricardo Caballeros y Cristian Sactic.
 
----
+## Estado actual
 
-## Descripción General
+Hay una base funcional y verificable: catálogo real, frontend servido desde Java,
+tiles PNG/JPEG, estado independiente por cliente, ACKs de aplicación, ventana
+limitada, retransmisión selectiva por timeout y cancelación de regiones antiguas.
 
-El proyecto implementará un servidor Java que sirve imágenes de ultra alta resolución mediante un **sistema de tiles** (como Google Maps). La solución utiliza múltiples protocolos coordinados para gestionar caché, predicción de movimiento y sincronización entre cliente-servidor.
+El visor actual usa coordenadas **X/Y a resolución nativa** y carga hasta 12 tiles
+por región. La demo `demo_numeros` genera únicamente el tile solicitado. También
+se admiten imágenes previamente divididas en tiles mediante un catálogo local.
+**La demo no constituye una prueba con la imagen de 24 GB.**
 
-### Nota sobre Indexación de Tiles
+## Ejecutar
 
-**⚠️ Sujeto a cambios:** El esquema de indexación de tiles está en evaluación. Se está considerando entre:
-- **Z/X/Y** (Google Maps estándar) - Propuesta inicial
-- **Quadkey** (Microsoft Bing Maps) - Alternativa más compacta
-- **X/Y sin zoom** - Resolución fija, matriz plana
+Para iniciar paso a paso y observar solicitudes en vivo, consulta
+[GUIA_INICIO_Y_PRUEBAS.md](GUIA_INICIO_Y_PRUEBAS.md).
 
-La decisión final dependerá de la aprobación del catedrático y compatibilidad con esquemas ya en uso por otros estudiantes (VAS360, Flare, VATP360, VAD360, TWRD).
+Requisitos de desarrollo: **JDK 21 y Maven 3.9+** disponibles en `PATH`.
 
----
-
-## Protocolos a Implementar
-
-### 1. Bootstrap HTTP/REST
-
-**Propósito:** Transferencia inicial de metadata de la imagen
-
-**Métodos:**
-- `GET /api/images` - Listar imágenes disponibles
-- `GET /api/image/{id}/metadata` - Obtener metadata de imagen específica
-
-**Respuesta del Servidor:**
-```json
-{
-  "imageId": "string",
-  "width": "int",
-  "height": "int",
-  "tileSize": 256,
-  "totalTiles": "int",
-  "maxZoom": "int | null (si sin zoom)",
-  "format": "jpeg"
-}
+```powershell
+mvn test
+mvn package
+java -jar target/server-0.0.1-SNAPSHOT.jar
 ```
 
-**RFC:** 7231 (HTTP/1.1 Semantics)  
-**Justificación:** Estándar establecido, soporte nativo en navegadores y Java, manejo seguro de conexiones
+Abrir **http://localhost:8081/**. Todos los recursos del cliente se sirven desde
+el servidor Java; no hay dependencias de CDN ni llamadas a servicios externos.
+El JAR empaquetado incluye sus dependencias para ejecución sin Internet. La
+primera compilación necesita las dependencias Maven descargadas.
 
----
+Opciones de arranque:
 
-### 2. Protocolo de Solicitud de Tiles sobre WebSocket
-
-**Propósito:** Solicitud y transferencia eficiente de tiles individuales
-
-**Tipo:** JSON bidireccional sobre WebSocket
-
-**Solicitud del Cliente:**
-```json
-{
-  "action": "fetch_tiles",
-  "imageId": "string",
-  "tiles": [
-    {"x": int, "y": int, "z": int | null},
-    {"x": int, "y": int, "z": int | null}
-  ],
-  "priority": "high|normal|low",
-  "metrics": {
-    "bandwidth_mbps": float,
-    "latency_ms": int,
-    "memory_available_mb": int
-  }
-}
+```powershell
+java -jar target/server-0.0.1-SNAPSHOT.jar --server.port=8082 --images.directory="D:/imagenes/tiles" --images.demo-enabled=false
 ```
 
-**Respuesta del Servidor:**
-```json
-{
-  "tile_id": "string",
-  "x": int,
-  "y": int,
-  "z": "int | null",
-  "data": "base64_encoded_image",
-  "compression": "jpeg|webp|png",
-  "quality": int,
-  "size_bytes": int
-}
+Para generar artefactos en una carpeta alternativa:
+
+```powershell
+mvn "-Dgigapixel.buildDirectory=.build" test package
 ```
 
-**RFC:** 6455 (WebSocket Protocol)  
-**Justificación:** Reduce overhead respecto a múltiples conexiones HTTP, comunicación bidireccional, ideal para transferencias continuas
+En la revisión de 2026-10-02 se utilizó Maven 3.9.9 descargado al directorio temporal
+de herramientas porque `mvn` no estaba en `PATH`. Java 21 ya estaba instalado.
 
----
+## Probar desde el navegador
 
-### 3. Protocolo de Control de Caché del Servidor (SCCP)
+1. Seleccionar una imagen y una región, o usar las flechas de navegación.
+2. Abrir otra pestaña: cada cliente debe conservar sus propios tiles y ventana.
+3. En **Diagnóstico del protocolo**, activar «Omitir un ACK» y cargar otra región.
+   El servidor retransmite sólo el tile pendiente; el cliente confirma el duplicado.
+4. Simular 90% de presión de memoria: la ventana del receptor baja a dos tiles.
+5. Cambiar rápidamente de región, cancelar o reconectar: las respuestas antiguas
+   no deben reemplazar la región actual.
 
-**Propósito:** Coordinar gestión de memoria en servidor entre tiles cargados
+El panel muestra RTT **de aplicación**, incluyendo transferencia y decodificación;
+no utiliza números aleatorios como medición de red. El selector de memoria está
+etiquetado como **simulación**, no como lectura real del heap del navegador.
 
-**Tipo:** JSON sobre WebSocket
+Prueba opcional E2E con Node.js, Playwright y Edge instalado:
 
-**Mensaje - Estado del Caché:**
-```json
-{
-  "action": "cache_state",
-  "cacheMemoryUsed_mb": int,
-  "cacheCapacity_mb": int,
-  "tilesInRam": int,
-  "cacheHitRate": float,
-  "cacheMissRate": float,
-  "hotTiles": [
-    {"x": int, "y": int, "z": "int | null", "accessCount": int}
-  ]
-}
+```powershell
+# Instalar Playwright en un directorio de herramientas y exponer su node_modules
+# mediante NODE_PATH, o usar una instalación existente.
+node scripts/verify-browser.cjs .build/server-0.0.1-SNAPSHOT.jar
 ```
 
-**Algoritmo:** LRU + LFU (Least Recently Used + Least Frequently Used)
+El script arranca su propio servidor en un puerto libre y lo detiene al terminar.
+`BROWSER_CHANNEL=chrome` permite usar Chrome en lugar de Edge.
 
-**Fórmula de Evicción:**
-```
-score(tile) = (lastAccessTime - now()) * 0.6 + (accessCount) * -0.4
-Si score < threshold → EVICT
-```
+## Agregar imágenes preprocesadas
 
-**Justificación:** Optimizar uso de RAM del servidor, mantener tiles más solicitados en memoria, mejorar hit rate
+Consultar [docs/imagenes.md](docs/imagenes.md). No se abre ni se envía la imagen
+completa; el servidor lee un archivo por tile y limita el tamaño de cada uno.
+El catálogo se valida al iniciar; para agregar entradas se actualiza y se reinicia.
 
----
+## Documentación y bitácoras
 
-### 4. Protocolo de Gestos y Cambio de Calidad (GACP)
+- [Contrato de protocolo GTP/1](docs/protocolo.md).
+- [Índice de implementación y resolución por fase](docs/fases/README.md).
+- [Resultados y procedimientos de verificación](docs/verificacion.md).
+- [Propuesta original, conservada como referencia](docs/propuesta_original.md).
+- `bitacora_fase1.md`: registro histórico de septiembre, con aclaración de su alcance.
 
-**Propósito:** Detectar tipo de interacción del usuario y ajustar calidad en tiempo real según el tipo de navegación
+## Requisitos de evaluación y trabajo pendiente
 
-**Tipo:** JSON sobre WebSocket
+Fuentes: `Proyecto_Servidor_Asi_ncrono.pdf` e `image_Indicators.pdf`. La indicación
+posterior enfatiza **40% funcionamiento/usabilidad y 60% protocolo**, con recuperación
+y control de flujo/congestión demostrables. Tener niveles o tiles por sí solo no
+cumple el objetivo. La imagen de 24 GB es una base para comenzar las pruebas reales;
+las imágenes indicadas de 17, 28, 55 y 93 GB tienen máximos de 20, 40, 80 y 115 puntos.
 
-**Solicitud del Cliente:**
-```json
-{
-  "action": "gesture",
-  "type": "pan|zoom|idle",
-  "velocity": float,
-  "current_fps": int
-}
-```
+Pendiente para la solución completa:
 
-**Respuesta del Servidor:**
-```json
-{
-  "quality_adjustment": "high|medium|low",
-  "tile_size_recommended": int,
-  "compression_level": int
-}
-```
+- Preprocesamiento de imágenes originales gigantes con I/O y memoria acotados.
+- Niveles de resolución y selección de calidad por cliente; el protocolo actual
+  rechaza `z` distinto de `null` para no aparentar soporte inexistente.
+- Predicción/prefetch, caché LRU/LFU y compresión adaptativa medidos y justificados.
+- Telemetría automática de recursos del cliente y ensayos con los archivos reales.
+- Validación de legibilidad de números, consumo de RAM, bytes transferidos, latencia
+  y múltiples clientes en el entorno de evaluación sin Internet.
 
-**Algoritmo:** Detección de patrones de movimiento + adaptive quality based on FPS
-
-**Lógica de Decisión:**
-```
-if type == "pan" and velocity > threshold_high:
-  quality_adjustment = "low"        // Pan rápido: baja calidad
-  compression_level = 60
-else if type == "pan" and velocity <= threshold_low:
-  quality_adjustment = "high"       // Pan lento: alta calidad
-  compression_level = 85
-else if type == "idle":
-  quality_adjustment = "high"       // Parado: máxima calidad
-  compression_level = 90
-else if type == "zoom":
-  quality_adjustment = "medium"     // Zoom: calidad media
-  compression_level = 75
-```
-
-**Justificación:** Mantener experiencia fluida incluso con conexiones lentas, reducir latencia durante navegación activa, mejorar percepción de responsividad
-
----
-
-### 5. Protocolo de Notificación de Presión de Memoria (MPNP)
-
-**Propósito:** Comunicar al servidor cuando el navegador está bajo presión de memoria y ajustar estrategia de envío
-
-**Tipo:** JSON sobre WebSocket
-
-**Solicitud del Cliente:**
-```json
-{
-  "action": "memory_pressure",
-  "current_usage": long,
-  "available": long,
-  "tiles_loaded": int,
-  "memory_limit": long
-}
-```
-
-**Respuesta del Servidor:**
-```json
-{
-  "action": "adjust_strategy",
-  "reduce_prefetch": boolean,
-  "decrease_quality": boolean,
-  "max_tiles_concurrent": int
-}
-```
-
-**Algoritmo:** Threshold-based memory monitoring con ajuste dinámico
-
-**Lógica de Decisión:**
-```
-memory_usage_percent = (current_usage / memory_limit) * 100
-
-if memory_usage_percent > 80:
-  reduce_prefetch = true
-  decrease_quality = true
-  max_tiles_concurrent = 2
-else if memory_usage_percent > 60:
-  reduce_prefetch = true
-  decrease_quality = false
-  max_tiles_concurrent = 4
-else:
-  reduce_prefetch = false
-  decrease_quality = false
-  max_tiles_concurrent = 8
-```
-
-**Justificación:** Evitar crash del navegador, sincronizar limitaciones de memoria entre cliente-servidor, ajuste proactivo de estrategia de transferencia según presión de recursos disponibles
-
----
-
-### 6. Protocolo de Compresión Adaptativa
-
-**Propósito:** Ajustar tamaño de tiles según recursos disponibles del cliente
-
-**Tipo:** Headers HTTP + Payload JSON
-
-**Variables de Decisión:**
-- Ancho de banda (Mbps)
-- Latencia (ms)
-- Memoria disponible (MB)
-- FPS actual (frames por segundo)
-
-**Decisiones Automáticas:**
-```
-if bandwidth < 2 Mbps:
-  compression = JPEG, quality = 60
-else if bandwidth < 5 Mbps:
-  compression = JPEG, quality = 75
-else if bandwidth < 10 Mbps:
-  compression = WebP, quality = 85
-else:
-  compression = WebP, quality = 90
-```
-
-**Codecs Soportados:**
-- JPEG (fast, good compression) - 60-90%
-- WebP (better compression) - 75-95%
-- PNG (lossless) - máxima calidad
-
-**Justificación:** Optimizar experiencia en conexiones lentas o dispositivos limitados, mantener responsividad
-
----
-
-## Arquitectura de Comunicación
-
-### Fase 1: Inicialización (HTTP REST)
-```
-Cliente → GET /api/image/{id}/metadata
-Servidor → JSON: dimensiones, tile_size, maxZoom (si aplica)
-```
-
-### Fase 2: Conexión WebSocket
-```
-Cliente → Establece conexión WebSocket
-Servidor → Listo para recibir solicitudes
-```
-
-### Fase 3: Actualización de Viewport
-```
-Cliente → viewport_update {pixelX, pixelY, movimiento, velocidad}
-Servidor → Predice próximos tiles, inicia prefetch en background
-```
-
-### Fase 4: Transferencia de Tiles
-```
-Cliente → fetch_tiles [lista de tiles a cargar]
-Servidor → Envía tiles comprimidos con prioridad
-```
-
-### Fase 5: Monitoreo Continuo
-```
-Cliente ↔ Servidor → Intercambio continuo de:
-  - Métricas (bandwidth, memory, fps)
-  - Estados de caché
-  - Predicciones
-  - Directivas de compresión
-```
-
----
-
-## Justificación Técnica
-
-### Protocolos Base
-
-- **HTTP/REST:** RFC 7231, soporte nativo en navegadores y Java, ideal para bootstrap
-- **WebSocket:** RFC 6455, bidireccional, overhead bajo, perfecto para streaming de tiles
-
-### Protocolos Personalizados
-
-- **SCCP:** Control de caché del servidor, optimización de RAM mediante LRU+LFU (referencia: Belady 1966)
-- **VPCP:** Predicción inteligente de movimiento mediante extrapolación lineal y análisis de patrones
-- **MPNP:** Gestión proactiva de presión de memoria entre cliente-servidor
-- **Compresión Adaptativa:** Decisiones basadas en métricas reales del cliente
-
-### Algoritmos
-
-- **LRU + LFU:** Estándar de cache replacement policies (Belady, L. A., 1966)
-- **Linear Regression:** Time series forecasting para predicción de movimiento
-- **Working Set:** Memory management (Denning, 1968)
-- **Quad-Tree Indexing:** Spatial data structures para localización eficiente
-
----
-
-## Referencias
-
-### RFC Standards
-- RFC 7230/7231: HTTP/1.1 Syntax and Semantics
-- RFC 6455: WebSocket Protocol
-- RFC 7233: HTTP Range Requests
-
-### Academic References
-- Belady, L. A. (1966). "A Study of Replacement Algorithms for Virtual Storage"
-- Denning, P. J. (1968). "The Working Set Model for Program Behavior"
-- Time Series Forecasting: Linear Regression and Prediction Models
-
-### Estándares de Tiling
-- Google Maps Tile System (Sujeto a cambios)
-- Quadkey Indexing (Under evaluation)
-- OGC Tile Map Service Standard
-
----
-
-## Notas Adicionales
-
-### Diferencias según Esquema de Indexación
-
-**Con Zoom (Z/X/Y o Quadkey):**
-- Múltiples niveles de resolución
-- Pirámide de tiles
-- Conversiones más complejas
-- Mejor para exploración detallada
-
-**Sin Zoom (X/Y):**
-- Resolución fija única
-- Matriz plana de tiles
-- Implementación más simple
-- Mejor para imágenes con nivel de detalle uniforme
-
-### Estado de la Propuesta
-
-✅ **Aprobado:** 
-- Protocolo 1: Bootstrap HTTP/REST
-- Protocolo 2: Protocolo de Solicitud de Tiles sobre WebSocket
-- Protocolo 3: Protocolo de Control de Caché del Servidor (SCCP)
-- Protocolo 4: Protocolo de Gestos y Cambio de Calidad (GACP) ✓
-- Protocolo 5: Protocolo de Notificación de Presión de Memoria (MPNP) ✓
-- Protocolo 6: Protocolo de Compresión Adaptativa
-
-⚠️ **Sujeto a cambios:** Esquema de indexación de tiles (Z/X/Y vs Quadkey vs Sin Zoom)  
-❓ **Pendiente validación:** Compatibilidad con esquemas VAS360, Flare, VATP360, VAD360, TWRD
-
----
-
-## Preguntas a Chaclan
-
-1. ¿Aprueba el uso de estos protocolos?
-2. ¿Cuál esquema de indexación de tiles recomienda: Z/X/Y, Quadkey o Sin Zoom?
-3. ¿Hay restricciones con respecto a VAS360, Flare, VATP360, VAD360 o TWRD?
-4. ¿Hay algún protocolo que otro estudiante esté usando que deba evitar?
-
----
-
-**FIN PROPUESTA**
+Los ACKs aquí confirman consumo del tile por la aplicación. WebSocket ya usa TCP:
+GTP/1 no implementa TCP ni sustituye su recuperación de paquetes.

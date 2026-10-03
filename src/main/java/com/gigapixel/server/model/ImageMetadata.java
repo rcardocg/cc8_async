@@ -5,7 +5,7 @@ public record ImageMetadata(
     int width,
     int height,
     int tileSize,
-    int totalTiles,
+    long totalTiles,
     Integer maxZoom,
     String format
 ) {}

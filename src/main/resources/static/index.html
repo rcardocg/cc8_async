@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Servidor de tiles — GTP/1</title>
+    <link rel="stylesheet" href="/viewer.css">
+    <script src="/viewer.js" defer></script>
+</head>
+<body>
+<main>
+    <h1>Transferencia progresiva de imágenes</h1>
+    <p>Prototipo X/Y a resolución nativa. <strong>demo_numeros es una imagen sintética de prueba</strong>;
+        no representa una validación con imágenes de 24 GB.</p>
+    <form id="controls">
+        <label>Imagen <select id="image" required></select></label>
+        <label>Columna inicial <input id="x" type="number" min="0" step="1" value="0" required></label>
+        <label>Fila inicial <input id="y" type="number" min="0" step="1" value="0" required></label>
+        <button id="load" type="submit" disabled>Cargar región</button>
+        <button id="cancel" type="button">Cancelar</button>
+        <button id="reconnect" type="button">Reconectar</button>
+    </form>
+    <p id="metadata">Consultando catálogo HTTP…</p>
+    <nav aria-label="Navegar por regiones">
+        <button type="button" data-dx="-4" data-dy="0">←</button>
+        <button type="button" data-dx="0" data-dy="-3">↑</button>
+        <button type="button" data-dx="0" data-dy="3">↓</button>
+        <button type="button" data-dx="4" data-dy="0">→</button>
+    </nav>
+    <p id="status" role="status">Desconectado</p>
+    <div id="viewport" aria-label="Región solicitada de la imagen"><div id="tiles"></div></div>
+    <details>
+        <summary>Diagnóstico del protocolo</summary>
+        <p>Los controles siguientes simulan fallos y presión de memoria para probar el protocolo.</p>
+        <label><input id="drop-ack" type="checkbox"> Omitir un ACK (una sola vez por solicitud)</label>
+        <label>Presión de memoria simulada
+            <select id="pressure"><option value="20">20%</option><option value="70">70%</option><option value="90">90%</option></select>
+        </label>
+        <button id="report-memory" type="button">Enviar presión simulada</button>
+        <p id="metrics">Sin métricas todavía.</p>
+        <pre id="log" aria-label="Registro del protocolo"></pre>
+    </details>
+</main>
+</body>
+</html>

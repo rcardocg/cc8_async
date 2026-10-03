@@ -8,10 +8,15 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 @Configuration
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer {
+    private final TileWebSocketHandler handler;
+
+    public WebSocketConfig(TileWebSocketHandler handler) {
+        this.handler = handler;
+    }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        // Registramos la ruta /ws/tiles y permitimos conexiones de cualquier origen (CORS)
-        registry.addHandler(new TileWebSocketHandler(), "/ws/tiles").setAllowedOrigins("*");
+        // El cliente y sus recursos se sirven desde este mismo servidor Java.
+        registry.addHandler(handler, "/ws/tiles");
     }
 }
