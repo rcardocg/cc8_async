@@ -25,7 +25,15 @@ function log(message) {
 function send(message) {
     if (!protocolReady || socket?.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify({ version: 1, ...message }));
+    // Traza de aplicación: correlación sin copiar payloads Base64 al registro.
+    log(`→ ${message.action}${traceIds(message)}${message.tiles ? `; ${message.tiles.length} tiles` : ""}`);
     return true;
+}
+
+function traceIds(message) {
+    return ["request_id", "transfer_id", "tile_id"]
+        .filter(key => message[key] != null)
+        .map(key => `; ${key}=${message[key]}`).join("");
 }
 
 function clearView() {
@@ -33,6 +41,7 @@ function clearView() {
     byId("tiles").replaceChildren();
     slots.clear();
     decoded.clear();
+    byId("region").textContent = "Sin región solicitada.";
 }
 
 function cancelCurrent() {
@@ -52,6 +61,7 @@ async function selectImage() {
     updateLoadButton();
     try {
         const response = await fetch(`/api/image/${encodeURIComponent(byId("image").value)}/metadata`);
+        log(`HTTP ${response.status} ${response.url}`);
         if (!response.ok) throw new Error(`Metadata HTTP ${response.status}`);
         const result = await response.json();
         if (generation !== metadataGeneration) return;
@@ -78,6 +88,10 @@ function loadRegion() {
     ackDropped = false;
     const width = Math.min(columns, Math.ceil(metadata.width / metadata.tileSize) - x);
     const height = Math.min(rows, Math.ceil(metadata.height / metadata.tileSize) - y);
+    // Rangos inclusivos, recortados al tamaño real; X/Y de protocolo son índices de tile.
+    const endX = Math.min(metadata.width, (x + width) * metadata.tileSize) - 1;
+    const endY = Math.min(metadata.height, (y + height) * metadata.tileSize) - 1;
+    byId("region").textContent = `Región: ${width} × ${height} tiles; columnas ${x}–${x + width - 1}, filas ${y}–${y + height - 1}; píxeles X=${x * metadata.tileSize}–${endX}, Y=${y * metadata.tileSize}–${endY} (límites inclusivos).`;
     byId("tiles").style.gridTemplateColumns = `repeat(${width}, ${metadata.tileSize}px)`;
     const tiles = [];
     for (let dy = 0; dy < height; dy++) {
@@ -89,6 +103,7 @@ function loadRegion() {
             element.className = "tile";
             element.style.width = `${Math.min(metadata.tileSize, metadata.width - tx * metadata.tileSize)}px`;
             element.style.height = `${Math.min(metadata.tileSize, metadata.height - ty * metadata.tileSize)}px`;
+            element.title = `Tile ${tx},${ty}; píxeles X=${tx * metadata.tileSize}–${Math.min(metadata.width, (tx + 1) * metadata.tileSize) - 1}, Y=${ty * metadata.tileSize}–${Math.min(metadata.height, (ty + 1) * metadata.tileSize) - 1}`;
             element.textContent = `Esperando ${tx},${ty}`;
             byId("tiles").append(element);
             slots.set(id, element);
@@ -110,20 +125,28 @@ async function handleMessage(message, source) {
     if (message.action === "ready") {
         protocolReady = true;
         updateLoadButton();
-        log(`Conectado: ${message.protocol}`);
+        log(`← ready; Conectado: ${message.protocol}`);
         byId("status").textContent = "Conectado";
         loadRegion();
         return;
     }
     if (message.action === "adjust_strategy") {
+        log(`← adjust_strategy; receiver_window=${message.receiver_window}; límite=${message.max_tiles_concurrent}`);
         byId("metrics").textContent = `Ventana del receptor: ${message.receiver_window}; límite efectivo: ${message.max_tiles_concurrent}`;
         return;
     }
+    if (["request_cancelled", "cancel_ignored", "ack_ignored"].includes(message.action)) {
+        log(`← ${message.action}${traceIds(message)}`);
+        return;
+    }
     if (message.request_id && message.request_id !== requestId) return;
-    if (message.action === "tile_data") {
+    if (message.action === "request_accepted") {
+        log(`← request_accepted${traceIds(message)}; total=${message.total}`);
+    } else if (message.action === "tile_data") {
         const activeRequest = requestId;
         const slot = slots.get(message.tile_id);
         if (!slot || !activeRequest) return;
+        log(`← tile_data${traceIds(message)}; intento=${message.attempt}; ${message.size_bytes} bytes comprimidos`);
         if (!decoded.has(message.tile_id)) {
             let url;
             try {
@@ -155,7 +178,7 @@ async function handleMessage(message, source) {
         }
         if (byId("drop-ack").checked && !ackDropped) {
             ackDropped = true;
-            log(`ACK omitido deliberadamente: ${message.transfer_id}`);
+            log(`ACK omitido deliberadamente${traceIds(message)}`);
             return;
         }
         send({ action: "ack_tile", request_id: activeRequest, transfer_id: message.transfer_id, tile_id: message.tile_id });
@@ -163,6 +186,7 @@ async function handleMessage(message, source) {
     } else if (message.action === "transfer_state") {
         byId("metrics").textContent = `cwnd=${message.cwnd.toFixed(2)}; en vuelo=${message.in_flight}; cola=${message.pending}; RTT aplicación=${message.rtt_ms.toFixed(1)}ms; RTO=${message.rto_ms}ms`;
     } else if (message.action === "request_complete") {
+        log(`← request_complete${traceIds(message)}; confirmados=${message.acknowledged}/${message.total}; fallidos=${message.failed}`);
         byId("status").textContent = `Terminada: ${message.acknowledged}/${message.total} confirmados; ${message.failed} fallidos. Puede volver a cargar la región.`;
         requestId = null;
     } else if (message.action === "tile_error") {
@@ -171,10 +195,10 @@ async function handleMessage(message, source) {
             slot.textContent = message.message;
             slot.classList.add("failed");
         }
-        log(`${message.code}: ${message.tile_id}`);
+        log(`← tile_error${traceIds(message)}; ${message.code}`);
     } else if (message.action === "error") {
         byId("status").textContent = `${message.code}: ${message.message}`;
-        log(byId("status").textContent);
+        log(`← error${traceIds(message)}; ${byId("status").textContent}`);
     }
 }
 
@@ -186,6 +210,8 @@ function connect() {
     updateLoadButton();
     const url = new URL("/ws/tiles", location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    byId("connection").textContent = `Origen HTTP: ${location.origin} | Destino WebSocket: ${url.href}`;
+    log(`Abriendo WebSocket ${url.href}`);
     const connection = new WebSocket(url);
     socket = connection;
     messageChain = Promise.resolve();
@@ -200,6 +226,7 @@ function connect() {
         requestId = null;
         updateLoadButton();
         byId("status").textContent = "Desconectado. Use Reconectar para volver a solicitar la región.";
+        log(`WebSocket cerrado: ${url.href}`);
     };
     connection.onerror = () => { if (connection === socket) log("Error WebSocket"); };
 }
@@ -227,8 +254,10 @@ document.querySelectorAll("[data-dx]").forEach(button => button.addEventListener
 }));
 
 async function start() {
+    byId("connection").textContent = `Origen HTTP: ${location.origin}`;
     try {
         const response = await fetch("/api/images");
+        log(`HTTP ${response.status} ${response.url}`);
         if (!response.ok) throw new Error(`Catálogo HTTP ${response.status}`);
         const images = await response.json();
         if (!images.length) throw new Error("No hay imágenes en el catálogo");

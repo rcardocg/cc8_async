@@ -12,6 +12,7 @@
     <h1>Transferencia progresiva de imágenes</h1>
     <p>Prototipo X/Y a resolución nativa. <strong>demo_numeros es una imagen sintética de prueba</strong>;
         no representa una validación con imágenes de 24 GB.</p>
+    <p id="connection">Origen HTTP y destino WebSocket pendientes.</p>
     <form id="controls">
         <label>Imagen <select id="image" required></select></label>
         <label>Columna inicial <input id="x" type="number" min="0" step="1" value="0" required></label>
@@ -21,6 +22,9 @@
         <button id="reconnect" type="button">Reconectar</button>
     </form>
     <p id="metadata">Consultando catálogo HTTP…</p>
+    <p>Columna/fila son índices de <strong>tiles (bloques de píxeles)</strong>, desde cero.
+        Un tile de 256 px en columna 1 empieza en el píxel X=256. Pase el cursor por un
+        bloque para consultar sus límites; los números de la demo son etiquetas sintéticas.</p>
     <nav aria-label="Navegar por regiones">
         <button type="button" data-dx="-4" data-dy="0">←</button>
         <button type="button" data-dx="0" data-dy="-3">↑</button>
@@ -28,6 +32,7 @@
         <button type="button" data-dx="4" data-dy="0">→</button>
     </nav>
     <p id="status" role="status">Desconectado</p>
+    <p id="region">Sin región solicitada.</p>
     <div id="viewport" aria-label="Región solicitada de la imagen"><div id="tiles"></div></div>
     <details>
         <summary>Diagnóstico del protocolo</summary>

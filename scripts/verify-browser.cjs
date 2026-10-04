@@ -50,6 +50,14 @@ async function main() {
         await page.goto(base);
         await complete(page);
         assert.equal(await page.locator("#tiles img").first().getAttribute("alt"), "Tile 0,0");
+        assert.ok((await page.locator("#connection").textContent()).includes(`ws://localhost:${port}/ws/tiles`));
+        assert.ok((await page.locator("#region").textContent()).includes("píxeles X=0–1023, Y=0–767"));
+        const trace = await page.locator("#log").textContent();
+        for (const action of ["→ fetch_tiles", "← request_accepted", "← tile_data", "→ ack_tile", "← request_complete"]) {
+            assert.ok(trace.includes(action), `Falta en la traza: ${action}`);
+        }
+        const accepted = frames.find(frame => frame.action === "request_accepted");
+        assert.ok(trace.includes(`request_id=${accepted.request_id}`));
 
         // Omisión deliberada del ACK de aplicación y un segundo cliente independiente.
         await page.locator("summary").click();
@@ -80,9 +88,19 @@ async function main() {
         await page.locator("#reconnect").click();
         await complete(page);
         assert.equal(await page.locator("#tiles img").first().getAttribute("alt"), "Tile 8,0");
+        assert.ok((await page.locator("#region").textContent()).includes("píxeles X=2048–3071, Y=0–767"));
+
+        // En el borde la región se reduce a un tile, sin coordenadas fuera de imagen.
+        await page.locator("#x").fill("15");
+        await page.locator("#y").fill("15");
+        await page.locator("#load").click();
+        await page.waitForFunction(() => document.getElementById("status").textContent.includes("1/1 confirmados; 0 fallidos"));
+        assert.equal(await page.locator("#tiles img").count(), 1);
+        assert.ok((await page.locator("#region").textContent()).includes("píxeles X=3840–4095, Y=3840–4095"));
+        assert.equal(await page.locator(".tile").getAttribute("title"), "Tile 15,15; píxeles X=3840–4095, Y=3840–4095");
         assert.deepEqual(external, [], "Todos los recursos deben provenir del servidor Java");
         assert.deepEqual(errors, [], "No debe haber errores JavaScript en el navegador");
-        console.log("PASS: PNG decodificado, dos clientes, recuperación de ACK, presión de memoria, reemplazo de región, cancelación, reconexión y recursos locales.");
+        console.log("PASS: PNG decodificado, dos clientes, recuperación de ACK, presión de memoria, reemplazo de región, cancelación, reconexión, recursos locales, puerto dinámico, traza y límites de píxeles.");
     } finally {
         if (browser) await browser.close();
         server.kill();
