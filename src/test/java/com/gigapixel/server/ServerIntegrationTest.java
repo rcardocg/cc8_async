@@ -3,6 +3,7 @@ package com.gigapixel.server;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
@@ -12,27 +13,33 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import javax.imageio.ImageIO;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.util.Base64;
-import java.util.UUID;
+import java.nio.file.Path;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ServerIntegrationTest {
+    @TempDir static Path directory;
     @LocalServerPort int port;
     @Autowired TestRestTemplate rest;
     @Autowired ObjectMapper mapper;
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
-        registry.add("images.directory", () -> System.getProperty("java.io.tmpdir") + "/cc8-test-" + UUID.randomUUID());
+        registry.add("images.directory", () -> directory.resolve("work").toString());
+        registry.add("images.originals-directory", () -> directory.resolve("originales").toString());
         registry.add("images.demo-enabled", () -> true);
     }
 
@@ -78,6 +85,58 @@ class ServerIntegrationTest {
             } finally {
                 socket.sendClose(WebSocket.NORMAL_CLOSURE, "done").get(5, TimeUnit.SECONDS);
             }
+        }
+    }
+
+    @Test
+    void browserInspectsOnlyHeaderWithoutUploadingOrRegisteringOriginal() throws Exception {
+        var output = new ByteArrayOutputStream();
+        ImageIO.write(new java.awt.image.BufferedImage(300, 280, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", output);
+        byte[] header = java.util.Arrays.copyOf(output.toByteArray(), 33);
+        HttpHeaders headers = new HttpHeaders(); headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        String endpoint = "/api/png/inspect?name=local.png&sizeBytes=93000000000&tileSize=256";
+        var result = rest.postForEntity(endpoint, new HttpEntity<>(header, headers), JsonNode.class);
+        assertEquals(200, result.getStatusCode().value());
+        assertEquals("local.png", result.getBody().path("path").asText());
+        assertEquals(300, result.getBody().path("width").asInt());
+        assertEquals(93_000_000_000L, result.getBody().path("sizeBytes").asLong());
+        assertEquals(5, result.getBody().at("/pyramid/totalTiles").asLong());
+        assertArrayEquals(new String[]{"demo_numeros"}, rest.getForObject("/api/images", String[].class));
+        try (var files = java.nio.file.Files.list(directory.resolve("work"))) {
+            assertEquals(0, files.count());
+        }
+        assertEquals(413, rest.postForEntity(endpoint, new HttpEntity<>(new byte[34], headers), JsonNode.class).getStatusCode().value());
+        assertEquals(400, rest.postForEntity(endpoint, new HttpEntity<>(new byte[33], headers), JsonNode.class).getStatusCode().value());
+        assertEquals(400, rest.postForEntity(endpoint + "0", new HttpEntity<>(header, headers), JsonNode.class).getStatusCode().value());
+    }
+
+    @Test
+    void registersBrowserHeaderAndExposesPendingMetadataStatusAndConflicts() throws Exception {
+        var output = new ByteArrayOutputStream();
+        ImageIO.write(new java.awt.image.BufferedImage(300, 280, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", output);
+        byte[] header = java.util.Arrays.copyOf(output.toByteArray(), 33);
+        HttpHeaders headers = new HttpHeaders(); headers.setContentType(MediaType.APPLICATION_OCTET_STREAM);
+        String endpoint = "/api/images?imageId=p2_test&name=local.png&sizeBytes=1000&tileSize=256";
+        try {
+            var result = rest.postForEntity(endpoint, new HttpEntity<>(header, headers), JsonNode.class);
+            assertEquals(202, result.getStatusCode().value());
+            assertEquals("/api/image/p2_test/status", result.getHeaders().getLocation().toString());
+            assertEquals("pending", result.getBody().path("state").asText());
+            var metadata = rest.getForObject("/api/image/p2_test/metadata", JsonNode.class);
+            assertEquals(2, metadata.path("levels").size());
+            assertTrue(metadata.path("completedLevels").isEmpty());
+            var state = rest.getForObject("/api/image/p2_test/status", JsonNode.class);
+            assertEquals("awaiting_transfer", state.path("sourceState").asText());
+            assertEquals(0, state.path("processedTiles").asLong());
+            assertTrue(java.util.List.of(rest.getForObject("/api/images", String[].class)).contains("p2_test"));
+            assertEquals(409, rest.postForEntity(endpoint, new HttpEntity<>(header, headers), JsonNode.class).getStatusCode().value());
+            assertEquals(400, rest.postForEntity(endpoint.replace("p2_test", "bad_header"), new HttpEntity<>(new byte[33], headers), JsonNode.class).getStatusCode().value());
+            assertEquals(413, rest.postForEntity(endpoint, new HttpEntity<>(new byte[34], headers), JsonNode.class).getStatusCode().value());
+            assertEquals(404, rest.getForEntity("/api/image/not-found/status", JsonNode.class).getStatusCode().value());
+        } finally {
+            java.nio.file.Files.deleteIfExists(directory.resolve("work/p2_test/meta.json"));
+            java.nio.file.Files.deleteIfExists(directory.resolve("work/p2_test"));
+            rest.getForObject("/api/images", String[].class);
         }
     }
 

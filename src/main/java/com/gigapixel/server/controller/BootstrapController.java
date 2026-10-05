@@ -22,6 +22,12 @@ public class BootstrapController {
 
     @GetMapping("/image/{id}/metadata")
     public ResponseEntity<ImageMetadata> getImageMetadata(@PathVariable String id) {
+        metadataService.status(id); // Refresca los registros persistidos antes de consultar.
         return ResponseEntity.ok(metadataService.getImage(id));
+    }
+
+    @GetMapping("/image/{id}/status")
+    public ResponseEntity<com.gigapixel.server.model.ImageStatus> getImageStatus(@PathVariable String id) {
+        return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore()).body(metadataService.status(id));
     }
 }

@@ -15,6 +15,18 @@ por región. La demo `demo_numeros` genera únicamente el tile solicitado. Tambi
 se admiten imágenes previamente divididas en tiles mediante un catálogo local.
 **La demo no constituye una prueba con la imagen de 24 GB.**
 
+Los originales de evaluación son **PNG**. P1 permite elegirlos desde el explorador
+del cliente, sin escribir rutas ni moverlos al proyecto, e inspeccionar su cabecera
+para estimar tiles, RAM y disco. Solo se envían 33 bytes; los pequeños tienen vista
+previa local con zoom. También existe CLI sin arrancar el servidor.
+El preprocesador PNG secuencial y el visor con pan/zoom multinivel siguen pendientes.
+Pruebas del CLI: [docs/pruebas_png_p1.md](docs/pruebas_png_p1.md).
+
+P2 añade **Registrar imagen** desde el cliente, persistencia en `meta.json`,
+metadata multinivel prevista y consulta de estado. Los registros pendientes
+aparecen en catálogo, pero no se cargan como tiles. Pruebas y contrato:
+[docs/registro_p2.md](docs/registro_p2.md).
+
 ## Ejecutar
 
 Para iniciar paso a paso y observar solicitudes en vivo, consulta
@@ -25,7 +37,7 @@ Requisitos de desarrollo: **JDK 21 y Maven 3.9+** disponibles en `PATH`.
 ```powershell
 mvn test
 mvn package
-java -jar target/server-0.0.1-SNAPSHOT.jar
+java -jar target/server.jar
 ```
 
 Abrir **http://localhost:8081/**. Todos los recursos del cliente se sirven desde
@@ -36,7 +48,7 @@ primera compilación necesita las dependencias Maven descargadas.
 Opciones de arranque:
 
 ```powershell
-java -jar target/server-0.0.1-SNAPSHOT.jar --server.port=8082 --images.directory="D:/imagenes/tiles" --images.demo-enabled=false
+java -jar target/server.jar --server.port=8082 --images.originals-directory="D:/imagenes/originales" --images.directory="D:/imagenes/tiles" --images.demo-enabled=false
 ```
 
 Para generar artefactos en una carpeta alternativa:
@@ -45,10 +57,18 @@ Para generar artefactos en una carpeta alternativa:
 mvn "-Dgigapixel.buildDirectory=.build" test package
 ```
 
-En la revisión de 2026-10-02 se utilizó Maven 3.9.9 descargado al directorio temporal
-de herramientas porque `mvn` no estaba en `PATH`. Java 21 ya estaba instalado.
+También se puede compilar y arrancar con `bash scripts/build.sh` y
+`bash scripts/gtp.sh` en Fedora, o `scripts\build.cmd` y `scripts\gtp.cmd` en
+Windows. Generan y ejecutan `.build/server.jar` desde la raíz del proyecto.
+`GTP_IMAGES` configura originales, `GTP_WORK` catálogo/tiles y `GTP_PORT` el puerto.
+Consulta [docs/imagenes.md](docs/imagenes.md) para las rutas y configuración local.
 
 ## Probar desde el navegador
+
+Para pruebas P1, usar **Elegir PNG** en la sección superior, revisar las estimaciones
+y descargar el informe JSON. La vista previa de archivos pequeños es local;
+los originales grandes requieren el preprocesador pendiente antes de visualizarlos.
+Para probar la transferencia GTP, usar la sección **Visor de tiles preparados**:
 
 1. Seleccionar una imagen y una región, o usar las flechas de navegación.
 2. Abrir otra pestaña: cada cliente debe conservar sus propios tiles y ventana.
@@ -67,7 +87,7 @@ Prueba opcional E2E con Node.js, Playwright y Edge instalado:
 ```powershell
 # Instalar Playwright en un directorio de herramientas y exponer su node_modules
 # mediante NODE_PATH, o usar una instalación existente.
-node scripts/verify-browser.cjs .build/server-0.0.1-SNAPSHOT.jar
+node scripts/verify-browser.cjs .build/server.jar
 ```
 
 El script arranca su propio servidor en un puerto libre y lo detiene al terminar.

@@ -17,11 +17,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class MetadataAndTileServiceTest {
     @TempDir Path directory;
+    @TempDir Path originals;
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
     void demoMetadataAndRealPngAgree() throws Exception {
-        MetadataService metadata = new MetadataService(mapper, directory.toString(), true);
+        MetadataService metadata = metadata(true);
         var image = metadata.getImage(MetadataService.DEMO_ID);
         assertEquals(256L, image.totalTiles());
         byte[] bytes = new TileService(metadata).readTile(new TileKey(image.imageId(), 15, 15));
@@ -34,7 +35,7 @@ class MetadataAndTileServiceTest {
 
     @Test
     void unknownImageAndOutOfBoundsDoNotReturnFabricatedMetadata() throws Exception {
-        MetadataService metadata = new MetadataService(mapper, directory.toString(), true);
+        MetadataService metadata = metadata(true);
         assertEquals(404, assertThrows(ResponseStatusException.class, () -> metadata.getImage("missing")).getStatusCode().value());
         assertThrows(IllegalArgumentException.class, () -> metadata.validateTile(new TileKey(MetadataService.DEMO_ID, -1, 0)));
         assertThrows(IllegalArgumentException.class, () -> metadata.validateTile(new TileKey(MetadataService.DEMO_ID, 16, 0)));
@@ -45,7 +46,7 @@ class MetadataAndTileServiceTest {
         writeCatalog("real", 300, 280, 4);
         Path folder = Files.createDirectory(directory.resolve("real"));
         ImageIO.write(new BufferedImage(44, 24, BufferedImage.TYPE_INT_RGB), "png", folder.resolve("1_1.png").toFile());
-        MetadataService metadata = new MetadataService(mapper, directory.toString(), false);
+        MetadataService metadata = metadata(false);
         assertEquals(java.util.List.of("real"), metadata.listImages());
         TileService tiles = new TileService(metadata);
         var decoded = ImageIO.read(new ByteArrayInputStream(tiles.readTile(new TileKey("real", 1, 1))));
@@ -57,16 +58,16 @@ class MetadataAndTileServiceTest {
     @Test
     void invalidCatalogFailsAtStartup() throws Exception {
         writeCatalog("../escape", 256, 256, 1);
-        assertThrows(IOException.class, () -> new MetadataService(mapper, directory.toString(), false));
+        assertThrows(IOException.class, () -> metadata(false));
         writeCatalog("real", 300, 280, 1);
-        assertThrows(IOException.class, () -> new MetadataService(mapper, directory.toString(), false));
+        assertThrows(IOException.class, () -> metadata(false));
     }
 
     @Test
     void totalTilesUsesLongArithmeticForLargeDimensions() throws Exception {
         long side = (Integer.MAX_VALUE + 255L) / 256;
         writeCatalog("large", Integer.MAX_VALUE, Integer.MAX_VALUE, side * side);
-        assertEquals(side * side, new MetadataService(mapper, directory.toString(), false).getImage("large").totalTiles());
+        assertEquals(side * side, metadata(false).getImage("large").totalTiles());
     }
 
     @Test
@@ -74,10 +75,29 @@ class MetadataAndTileServiceTest {
         writeCatalog("real", 256, 256, 1);
         Path folder = Files.createDirectory(directory.resolve("real"));
         Path tile = folder.resolve("0_0.png");
-        TileService tiles = new TileService(new MetadataService(mapper, directory.toString(), false));
+        TileService tiles = new TileService(metadata(false));
         Files.write(tile, new byte[TileService.MAX_TILE_BYTES + 1]);
         assertThrows(IOException.class, () -> tiles.readTile(new TileKey("real", 0, 0)));
         ImageIO.write(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB), "png", tile.toFile());
+        assertThrows(IOException.class, () -> tiles.readTile(new TileKey("real", 0, 0)));
+    }
+
+    private MetadataService metadata(boolean demoEnabled) throws IOException {
+        return new MetadataService(mapper, new ImagesLayout(originals.toString(), directory.toString()), demoEnabled);
+    }
+
+    @Test
+    void rejectsTileSymlinkOutsideWorkDirectory() throws Exception {
+        writeCatalog("real", 256, 256, 1);
+        Path outside = originals.resolve("0_0.png");
+        ImageIO.write(new BufferedImage(256, 256, BufferedImage.TYPE_INT_RGB), "png", outside.toFile());
+        Path folder = Files.createDirectory(directory.resolve("real"));
+        try {
+            Files.createSymbolicLink(folder.resolve("0_0.png"), outside);
+        } catch (UnsupportedOperationException | IOException e) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "El sistema no permite crear enlaces: " + e);
+        }
+        TileService tiles = new TileService(metadata(false));
         assertThrows(IOException.class, () -> tiles.readTile(new TileKey("real", 0, 0)));
     }
 

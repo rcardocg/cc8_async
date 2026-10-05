@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan temporal GTP/1 · PNG</title>
+<style>
+body{font-family:system-ui,sans-serif;line-height:1.6;background:#f4f6fa;color:#16233a;margin:0;padding:2rem}
+main{max-width:1000px;margin:auto;background:white;padding:2rem;border-radius:8px}
+h2{border-bottom:1px solid #ccd5e4;margin-top:2rem}code{background:#eef1f7;padding:.1rem .3rem}
+pre{background:#eef1f7;padding:1rem;overflow-x:auto}table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #ccd5e4;padding:.5rem;text-align:left;vertical-align:top}
+.nota{background:#eef4ff;border-left:5px solid #2b5fb3;padding:1rem}
+.aviso{background:#fff4e0;border-left:5px solid #d98b17;padding:1rem}
+a{color:#1f4fa3}
+</style>
+</head>
+<body><main>
+<h1>GTP/1 · traspaso temporal de trabajo</h1>
+<p>CC8 · Java 21 / Spring Boot 3.2.4 · actualización 2026-10-04.</p>
+<p class="aviso"><strong>Temporal, no es la entrega final.</strong> Sin estimaciones de duración.
+Se reemplazó el plan anterior para corregir la suposición de ZIP/TIFF: el usuario confirmó
+que <strong>todos los originales son PNG</strong>. No desarrollar extracción ni lectores de esos otros formatos.
+Los originales se deben preprocesar con memoria acotada y navegar como un visor normal con pan, zoom y refinamiento.</p>
+<nav><ul>
+<li><a href="#contexto">Contexto y evaluación</a></li>
+<li><a href="#estado">Estado implementado</a></li>
+<li><a href="#png">Pipeline PNG</a></li>
+<li><a href="#protocolo">Diseño de protocolo pendiente</a></li>
+<li><a href="#orden">Orden de ejecución</a></li>
+<li><a href="#pruebas">Pruebas y datos necesarios</a></li>
+</ul></nav>
+
+<h2 id="contexto">1. Contexto y evaluación</h2>
+<ul>
+<li>Repositorio: <code>/home/rcardocg/Documentos/cc8_async</code>.</li>
+<li><code>protocolo.md</code> en la raíz: especificación objetivo aprobada, todavía sin versionar.
+<code>docs/protocolo.md</code>: contrato GTP/1 v1 implementado. Distinguir objetivo de evidencia real.</li>
+<li>Indicaciones del auxiliar: 40% funcionamiento/usabilidad y 60% protocolo propio de control/recuperación.
+Niveles y zoom son la base; también se necesita demostrar flujo, ventana y recuperación.</li>
+<li>Imagen de 24 GB: base de pruebas. Imágenes de evaluación de 17/28/55/93 GB:
+20/40/80/115 puntos según indicaciones comunicadas por el usuario.</li>
+<li>Números legibles a máxima definición; no enviar nunca el original completo al navegador.
+Sin peticiones externas durante la ejecución; evaluación sin internet.</li>
+<li>No añadir dependencias sin necesidad. No usar tamaños de archivo comprimido para inferir dimensiones.</li>
+</ul>
+
+<h2 id="estado">2. Estado implementado</h2>
+<h3>P0</h3>
+<ul>
+<li><code>ImagesLayout</code> prepara originales/work separados, resuelve raíces una vez y prueba escritura
+solo en work. Originales existentes pueden ser de solo lectura.</li>
+<li><code>GTP_IMAGES</code>, <code>GTP_WORK</code>, <code>GTP_PORT</code>. Defaults:
+<code>./data/originales</code>, <code>./data/work</code>, <code>8081</code>.</li>
+<li>Lanzadores Bash/cmd en <code>scripts/</code>, JAR estable <code>.build/server.jar</code>,
+configuración local opcional y VS Code sin rutas personales.</li>
+<li>26 pruebas pasaron en Fedora al finalizar P0. Los lanzadores Windows necesitan prueba real allí.</li>
+</ul>
+<h3>P1 · alcance PNG</h3>
+<ul>
+<li>CLI despachado antes de Spring: <code>inspect</code>, <code>ladder</code>, <code>ingest --dry-run</code>, <code>help</code>.</li>
+<li><code>PngInspector</code> lee 33 bytes: firma e IHDR, CRC, dimensiones, color/profundidad, Adam7.
+No abre ImageIO ni decodifica IDAT. No garantiza integridad del resto del PNG.</li>
+<li><code>image/PyramidMath</code> compartida: niveles y estimaciones en long con detección de overflow,
+redondeo entero y nivel 0 correcto para imágenes pequeñas.</li>
+<li><code>LadderReport</code>: primer nivel de la carpeta, orden por tamaño, errores por archivo.</li>
+<li><code>GtpCli</code>: JSON, presupuestos de memoria/disco y códigos 0/1/2. No crea carpetas ni tiles.
+Ingesta real todavía pendiente. Se retiró el <code>ZipProbe</code> creado bajo la suposición incorrecta.</li>
+<li>Verificación P1: 34 pruebas aprobadas, CLI empaquetado con PNG válido y rutas con espacios,
+archivo disperso sintético de tamaño lógico 93 GB inspeccionado con heap de 64 MiB (RSS ~104 MiB).
+No es una prueba de decodificación de una imagen real de ese tamaño.</li>
+</ul>
+<h3>Servidor y visor existentes</h3>
+<ul>
+<li>Catálogo plano <code>catalog.json</code>, tiles PNG/JPEG <code>{id}/{x}_{y}.{format}</code>.
+P2 agrega registros <code>{id}/meta.json</code> con maxZoom y niveles previstos.
+<code>TileKey(imageId,z,x,y,q)</code> mantiene compatibilidad con la identidad plana.</li>
+<li>GTP/1 v1: estado por sesión, ventana, slow start, RTT/RTO, reenvío selectivo, cancelación,
+límites y ACK después de decodificación.</li>
+<li>Visor actual: grilla X/Y a resolución nativa. Pan/zoom multinivel normal todavía pendiente.
+La demo sintética no acredita la evaluación con imágenes gigantes.</li>
+</ul>
+
+<h2 id="png">3. Pipeline PNG sin agotar RAM</h2>
+<p class="nota">PNG es un flujo comprimido secuencial. Una región no se puede leer saltando a un
+offset arbitrario de IDAT. Una vez preparado el original, el visor sí tendrá acceso directo a tiles.</p>
+<ol>
+<li>Inspeccionar originales reales con P1: dimensiones, color, profundidad, Adam7 y filas.</li>
+<li>Implementar decoder secuencial de chunks IDAT con Inflater, filtros PNG y validación de CRC/IEND.
+Retener filas necesarias y buffers limitados; nunca <code>ImageIO.read(originalGigante)</code>.</li>
+<li>Generar tiles nativos con memoria acotada. Una banda completa de <code>ancho × 256</code> tampoco
+es necesariamente viable. Si hace falta, volcar fragmentos al work en vez de acumular toda la banda.</li>
+<li>Generar niveles reducidos desde tiles escritos, con reducción de área 2×2. No releer el original
+por cada tile ni materializar una imagen completa.</li>
+<li>Publicar metadata/progreso atómicamente, solo niveles completos; cancelación y reanudación verificadas.</li>
+<li>Separar soporte de grayscale, RGB, indexado, transparencia y 16 bits. Adam7 requiere varias pasadas
+y planificación propia. No declarar soporte a partir de la cabecera solamente.</li>
+</ol>
+<pre><code>&lt;GTP_IMAGES&gt;/imagen.png          original sin modificar
+&lt;GTP_WORK&gt;/&lt;image-id&gt;/
+  meta.json                       estado, dimensiones, niveles
+  tiles/{z}/{x}_{y}.png            salida preparada (futura)</code></pre>
+<p>Preflight estima RGBA8 de todos los niveles + 4096 bytes por tile: sin ratio de compresión,
+no es garantía del disco final. Memoria mínima: dos filas empaquetadas; no incluye toda la JVM,
+Inflater ni bandas. A 16 bits se debe decidir cómo conservar precisión, sin fingir que RGBA8 es sin pérdida.</p>
+<p>Un dataset por vez. Work local con ruta corta, fuera de carpetas sincronizadas. No borrar originales.
+La ingesta debe comprobar espacio antes de escribir y medir RAM real durante las pruebas.</p>
+
+<h2 id="protocolo">4. Diseño pendiente del protocolo</h2>
+<p>Conservar lo que ya funciona en GTP/1 v1 y cerrar el delta frente a la especificación raíz.
+Lo siguiente es <strong>propuesta pendiente</strong>, no funcionalidad implementada:</p>
+<table>
+<tr><th>Área</th><th>Propuesta</th></tr>
+<tr><td>Identidad</td><td><code>tile_id=image_id:z:x:y:q</code>; z=0 vista general, z=maxZoom nativo;
+q=0..3 independiente del nivel. Aritmética de dimensiones/tiles en long.</td></tr>
+<tr><td>Control</td><td>JSON con version/action; fetch_tiles con z/q, viewport, prioridad y reemplazo;
+cancelación parcial; gestos y quality_adjustment; metadata/status de ingesta.</td></tr>
+<tr><td>Payload</td><td>Evaluar frame binario para evitar 33% de Base64. El layout anterior es propuesta,
+requiere definir orden de bytes, secuencias, wrap y correlación antes de fijarlo como contrato.</td></tr>
+<tr><td>Recuperación GTP-RA</td><td>SACK por tiles, decisión repetir/abandonar según visibilidad,
+calidad sustituta y presión de memoria. Comparar SR y GTP-RA sobre la misma escena.</td></tr>
+<tr><td>Flow control</td><td>Ventana receptora en bytes decodificados además de límite de payload en vuelo;
+no confundir bytes comprimidos con memoria de bitmaps. MPNP y max_quality efectivos.</td></tr>
+<tr><td>RTT/RTO</td><td>SRTT/RTTVAR, Karn y backoff (RFC 6298); slow start/AIMD (RFC 5681);
+TCP como referencia (RFC 9293), sin afirmar que el WebSocket simula pérdidas de paquetes TCP.</td></tr>
+<tr><td>Calidad</td><td>Preview q0 reducido 256→64 con promedio 4×4 y paleta de 16/256 colores;
+q1/q2 JPEG; q3 nítido. Preview transitorio, sustituido sin acumular memoria.</td></tr>
+<tr><td>Visor</td><td>Canvas, pan y zoom normal, respaldo de nivel inferior, refinamiento en reposo,
+LRU de ImageBitmap por bytes y close al expulsar. Estado/progreso siempre visibles.</td></tr>
+</table>
+<p>Función candidata, aún por validar y calibrar:</p>
+<pre><code>U(t) = 1.0·visibilidad + 0.6·(3-q)/3 + 0.4·prefetch
+       - 0.8·yaEnVuelo - 1.2·presión
+U ≥ 0.35: repetir; U &lt; 0.35: abandonar trabajo que ya no aporta.</code></pre>
+<p>No resolver TSP exacto para la cola. Comparar centro primero/BFS, serpentín, Morton y vecino más cercano
+con tiempo de cobertura visible y bytes desperdiciados. No afirmar optimalidad ni superioridad sin mediciones.</p>
+
+<h2 id="orden">5. Orden de ejecución</h2>
+<p class="nota"><strong>Siguiente parte: P3.</strong> P0, P1 y la base de registro P2 están implementados y verificados en Fedora.
+P2 registra metadata y seguimiento sin transferir el original; P3 conectará la fuente y hará el procesamiento real.
+El visor completo resulta de conectar esa base con P4, P5 y P6. Las pruebas y documentación
+se actualizan durante cada parte, aunque P7 reúne la evidencia final.</p>
+<table>
+<tr><th>Parte</th><th>Resultado principal</th><th>Estado</th></tr>
+<tr><td><a href="#p0">P0</a></td><td>Rutas y arranque portables</td><td>Implementado; prueba Windows pendiente</td></tr>
+<tr><td><a href="#p1">P1</a></td><td>Elegir e inspeccionar PNG desde cliente y CLI</td><td>Implementado; datasets reales por verificar</td></tr>
+<tr><td><a href="#p2">P2</a></td><td>Registro de imagen, niveles y estado de ingesta</td><td>Base implementada; fuente/decoder pendientes de P3</td></tr>
+<tr><td><a href="#p3">P3</a></td><td>PNG convertido en tiles con memoria acotada</td><td>Pendiente</td></tr>
+<tr><td><a href="#p4">P4</a></td><td>Calidades progresivas y caché del servidor</td><td>Pendiente</td></tr>
+<tr><td><a href="#p5">P5</a></td><td>Protocolo multinivel, flujo y recuperación GTP-RA</td><td>Pendiente</td></tr>
+<tr><td><a href="#p6">P6</a></td><td>Visor normal de pan/zoom sobre tiles</td><td>Pendiente</td></tr>
+<tr><td><a href="#p7">P7</a></td><td>Experimentos y evidencia final</td><td>Pendiente</td></tr>
+</table>
+
+<h3 id="p0">P0 · Rutas y arranque multiplataforma</h3>
+<p><strong>Objetivo:</strong> que ambos equipos puedan arrancar sin rutas personales quemadas en el proyecto
+y que originales y archivos de trabajo estén separados.</p>
+<ul>
+<li><strong>Trabajo:</strong> variables <code>GTP_IMAGES</code>, <code>GTP_WORK</code>, <code>GTP_PORT</code>;
+<code>ImagesLayout</code> para crear y validar raíces, comprobar escritura del work y consultar espacio libre.</li>
+<li><strong>Entregables:</strong> lanzadores Bash/cmd, <code>.build/server.jar</code>, ejemplo de configuración local,
+Git ignorando datos y salidas, VS Code sin rutas de una máquina concreta.</li>
+<li><strong>Pruebas:</strong> rutas con espacios, arranque desde otra carpeta, work sin permisos, originales
+de solo lectura y rechazo de enlaces de tiles que salgan del work.</li>
+<li><strong>Cierre:</strong> arranque reproducible y fallos explícitos. Implementado en Fedora;
+la ejecución real en Windows sigue por comprobar.</li>
+</ul>
+
+<h3 id="p1">P1 · Selección e inspección PNG</h3>
+<p><strong>Objetivo:</strong> elegir originales desde el explorador del cliente y conocer sus características
+antes de decidir cómo procesarlos, sin cargar una imagen gigante.</p>
+<ul>
+<li><strong>Trabajo:</strong> compartir validador de firma/IHDR/CRC y <code>PyramidMath</code> entre HTTP y CLI.
+Cliente envía solo 33 bytes y presenta dimensiones, color, Adam7, tiles y estimaciones.</li>
+<li><strong>Entregables:</strong> selector PNG, informe descargable, recálculo con tiles 256/512,
+<code>inspect</code>, <code>ladder</code> y <code>ingest --dry-run</code>. Preview local limitado a 4 Mpx y 16 MiB.</li>
+<li><strong>Pruebas:</strong> archivo válido/inválido, cuerpo HTTP de 33 bytes, cambio de selección,
+descarga, preview pequeño, preview grande omitido y dry-run sin escrituras.</li>
+<li><strong>Cierre:</strong> inspección acotada y datos útiles del dataset real. Código verificado con
+35 pruebas Java y E2E Chromium; falta ejecutar el recorrido sobre los originales del curso.</li>
+<li><strong>Límite:</strong> cabecera válida no equivale a imagen íntegra. El navegador entrega un nombre
+y acceso local al archivo, no una ruta que Java pueda abrir. P1 no ingiere ni registra tiles.</li>
+</ul>
+
+<h3 id="p2">P2 · Registro, metadata multinivel y estado de ingesta</h3>
+<p class="nota"><strong>Implementado:</strong> registro de cabecera desde cliente, metadata persistida atómicamente,
+estado pending/awaiting_transfer, validación de niveles y refresco de catálogo. Sin tiles publicados ni original
+transferido. 40 pruebas Java y E2E Chromium aprobados. Contrato y pruebas en <code>docs/registro_p2.md</code>.</p>
+<p><strong>Objetivo:</strong> convertir una imagen seleccionada en una entidad identificable cuyo estado
+y niveles puedan consultar el cliente, el CLI y el futuro preprocesador.</p>
+<ul>
+<li><strong>Trabajo:</strong> metadata por imagen en <code>meta.json</code>: identificador, dimensiones,
+tileSize, maxZoom, niveles con filas/columnas, calidades disponibles y progreso.</li>
+<li>Definir la identidad <code>TileKey(imageId,z,x,y,q)</code> y validar coordenadas y bordes por nivel
+con la matemática compartida. Distinguir niveles calculados de niveles realmente generados.</li>
+<li>Introducir estados <code>pending → processing → ready</code> y <code>failed</code>, con causa y progreso.
+No marcar una imagen lista solo porque se inspeccionó su cabecera.</li>
+<li><strong>API prevista:</strong> <code>POST /api/images</code> para registrar/iniciar el trabajo (202),
+<code>GET /api/image/{id}/status</code> y metadata ampliada; catálogo actualizable sin reiniciar.</li>
+<li><strong>Entrada del original:</strong> definir cómo el archivo elegido llega al proceso Java.
+Si está en otra máquina, requiere transferencia por bloques/streaming y límites; no enviar una ruta
+del navegador ni el PNG entero en un buffer. La inspección de 33 bytes no sustituye este paso.</li>
+<li><strong>Pruebas:</strong> registro y consulta consistentes, identificadores duplicados/invalidos,
+imagen desconocida, estados y errores, niveles impares y bordes parciales, catálogo plano/demo compatibles.</li>
+<li><strong>Cierre:</strong> cliente puede identificar y seguir una imagen registrada, sin aparentar
+ingesta completa. La ejecución del decoder pertenece a P3 y la migración WebSocket a P5.</li>
+</ul>
+
+<h3 id="p3">P3 · Preprocesador PNG secuencial y memoria acotada</h3>
+<p><strong>Objetivo:</strong> transformar un original PNG en una pirámide de tiles sin decodificar
+la imagen completa en RAM. Esta parte permite empezar a probar imágenes reales por regiones.</p>
+<ul>
+<li><strong>Trabajo:</strong> recorrer chunks/IDAT, decodificar Deflate e invertir filtros PNG con
+buffers limitados. Validar CRC, finalización e integridad; detectar originales truncados.</li>
+<li>Escribir tiles nativos y construir niveles reducidos desde tiles ya escritos. Controlar memoria
+de filas y bandas; volcar fragmentos al work cuando una banda completa no quepa.</li>
+<li>Usar el registro P2 para progreso, publicación atómica, cancelación y reanudación.
+Comprobar disco antes y durante el trabajo, y eliminar temporales propios incompletos.</li>
+<li>Empezar con la variante PNG del archivo pequeño real. Ampliar soporte según el inventario:
+grayscale/RGB/indexado/alpha, 16 bits y Adam7; variantes aún no soportadas deben fallar claramente.</li>
+<li><strong>Pruebas:</strong> comparar píxeles y tiles contra originales pequeños, cubrir los cinco filtros,
+bordes y niveles impares, corrupción, falta de espacio, cancelación y reinicio.</li>
+<li><strong>Cierre:</strong> imagen pequeña ingerida con tiles reales y niveles completos;
+subir tamaño progresivamente con heap limitado, medir RSS/pico de disco y conservar evidencia.</li>
+</ul>
+
+<h3 id="p4">P4 · Calidades progresivas y caché codificada</h3>
+<p><strong>Objetivo:</strong> entregar una representación ligera primero y sustituirla por una nítida,
+sin almacenar ni recalcular todas las variantes de toda la imagen.</p>
+<ul>
+<li><strong>Trabajo:</strong> q0 reducido y cuantizado; q1/q2 de menor/mayor calidad; q3 final.
+Reducir con promedio de área para evitar destruir los contornos de números.</li>
+<li>Resolver precisión/transparencia de las variantes. Un original de 16 bits no se conserva
+sin pérdida convirtiéndolo simplemente a RGBA8.</li>
+<li>Generación bajo demanda desde tiles preparados y caché LRU codificada con límite por bytes,
+identidad z/x/y/q y estadísticas de aciertos/evicciones.</li>
+<li><strong>Pruebas:</strong> formato/paleta/profundidad, bordes y dimensiones, calidad visual,
+legibilidad final, uso real de memoria, evicción y concurrencia.</li>
+<li><strong>Cierre:</strong> variantes decodificables, límite de caché respetado y refinamiento medible;
+no prometer un peso fijo de archivo ni acumular todas las q en disco.</li>
+</ul>
+
+<h3 id="p5">P5 · GTP actualizado y recuperación consciente del contenido</h3>
+<p><strong>Objetivo:</strong> transportar niveles y calidades con control propio de flujo/recuperación.
+Es la parte central del 60% correspondiente al protocolo.</p>
+<ul>
+<li><strong>Trabajo:</strong> migrar solicitudes/ACK/estados a z/q; definir versión, correlación y
+frame binario si se adopta. Actualizar cliente y servidor juntos.</li>
+<li>ACK tras decodificar, SACK/confirmación acumulativa, cancelación parcial y abandono de trabajo
+obsoleto. Definir secuencias, huecos y wrap antes de implementar el scoreboard.</li>
+<li>Ventana receptora basada en bytes decodificados, límites comprimidos en vuelo, control de memoria,
+slow start/AIMD, SRTT/RTTVAR/RTO, Karn y backoff.</li>
+<li>Gestos/calidad, prioridad visible y prefetch limitado; política SR y candidata GTP-RA comparables.
+Calibrar U(t) con resultados, no tratar sus coeficientes como demostrados.</li>
+<li><strong>Pruebas:</strong> aislamiento entre clientes, ACK duplicado/falso/tardío, timeout, SACK,
+cancelación/refinamiento, cambios rápidos, límites, presión de memoria y errores de lectura.</li>
+<li><strong>Cierre:</strong> traza coherente en navegador y casos reproducibles de recuperar o abandonar,
+con métricas de bytes, latencia y trabajo útil.</li>
+</ul>
+
+<h3 id="p6">P6 · Visor normal de imágenes grandes</h3>
+<p><strong>Objetivo:</strong> navegar la imagen real mediante pan y zoom sin gestionar coordenadas de
+tiles manualmente y sin cargar el original completo en el navegador.</p>
+<ul>
+<li><strong>Trabajo:</strong> canvas, transformación entre pantalla/píxeles/nivel, arrastre,
+zoom centrado en cursor o punto elegido, ajustar y 1:1.</li>
+<li>Solicitar tiles visibles y respaldo de nivel inferior; refinar en reposo y descartar respuestas
+de vistas anteriores. Integrar selección P1, registro P2, procesamiento P3 y transporte P5.</li>
+<li>LRU de bitmaps por bytes, cierre al sustituir/evictar y presión comunicada al servidor.
+Mostrar estados/progreso/errores sin dejar al usuario sin respuesta.</li>
+<li><strong>Pruebas:</strong> pan/zoom/bordes, cambio de imagen, refinamiento, respuestas tardías,
+memoria después de navegación prolongada, reconexión y legibilidad de números a 1:1.</li>
+<li><strong>Cierre:</strong> elegir un original, seguir su procesamiento y navegar sus tiles reales.
+La vista previa pequeña de P1 no reemplaza esta verificación extremo a extremo.</li>
+</ul>
+
+<h3 id="p7">P7 · Experimentos, evidencia y entrega</h3>
+<p><strong>Objetivo:</strong> demostrar con mediciones que el visor y el protocolo cumplen el objetivo
+con los datasets reales y que la documentación describe exactamente lo implementado.</p>
+<ul>
+<li><strong>Trabajo:</strong> comparar SR/GTP-RA y estrategias de orden sobre escenas equivalentes;
+medir cobertura visible, retransmisiones, abandonos, bytes y latencia.</li>
+<li>Escalera de PNG pequeño a grande; registrar ingesta, RAM/disco, memoria del navegador,
+tiempo de primera imagen útil y legibilidad final. Probar varios clientes y operación sin internet.</li>
+<li>Actualizar contrato, campos, algoritmos, estados, diagramas, límites y referencias RFC verificadas;
+guías Fedora/Windows y bitácoras objetivo → fallo → cambio → verificación → límites.</li>
+<li><strong>Pruebas:</strong> E2E sobre imágenes reales, recursos locales, modos de recuperación,
+fallos controlados y reproducción desde otro equipo.</li>
+<li><strong>Cierre:</strong> evidencia reproducible y desviaciones explícitas; distinguir demo,
+fixtures sintéticas y datasets reales. Borrar el plan temporal al cerrar la fase.</li>
+</ul>
+
+<h2 id="pruebas">6. Pruebas y datos necesarios</h2>
+<p class="nota">P2 verificado: 40 pruebas Java y E2E Chromium. Para probar a mano: seleccionar PNG,
+registrar un identificador, consultar pending, intentar duplicado y reiniciar para comprobar persistencia.
+Mañana retomar P3 con transferencia/lectura acotada del original y decoder PNG secuencial.</p>
+<p class="nota">Actualización 2026-10-05: cliente rediseñado con selector local, informe P1 y preview
+hasta 4 megapíxeles / 16 MiB. API <code>POST /api/png/inspect</code> comparte validador con CLI y rechaza
+cuerpos mayores de 33 bytes. 35 pruebas Java aprobadas y E2E Chromium aprobado: selección, zoom local,
+descarga, rechazo de preview grande y continuidad del protocolo. No es ingesta ni visualización GTP del original.</p>
+<p>Procedimiento concreto en <code>docs/pruebas_png_p1.md</code>. Arranque/layout en
+<code>docs/imagenes.md</code>. Evidencia en <code>docs/fases/fase_00_entorno.md</code>.</p>
+<pre><code>bash scripts/build.sh
+java -Xmx128m -jar .build/server.jar cli inspect "imagen.png" --pretty
+java -Xmx128m -jar .build/server.jar cli ladder "originales" --pretty
+java -Xmx128m -jar .build/server.jar cli ingest "imagen.png" --dry-run --work "work" --pretty</code></pre>
+<ul>
+<li>El CLI debe terminar sin Spring, con RAM baja, incluso para originales muy grandes. Solo lee cabecera.</li>
+<li>Compartir informe de escalera y preflight del PNG pequeño y primero grande, más RAM/disco disponibles.</li>
+<li>Confirmar dimensiones, profundidad y entrelazado reales; no hay razón para usar datos históricos ESO PSB/TIFF.</li>
+<li>Referencia visual <code>image_Indicators.pdf</code>: confirmar lo que muestra para comprobar legibilidad.</li>
+<li>Prueba Windows pendiente; no marcarla completada solo por tener lanzadores cmd.</li>
+</ul>
+<p>Al cerrar la fase, borrar este archivo temporal. La documentación final debe reflejar únicamente
+lo implementado y verificado, con desviaciones explícitas frente a la especificación.</p>
+</main></body></html>

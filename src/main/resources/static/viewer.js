@@ -15,6 +15,227 @@ let ackDropped = false;
 let protocolReady = false;
 let messageChain = Promise.resolve();
 
+let localFile = null;
+let inspectionText = null;
+let localGeneration = 0;
+let inspectionAbort = null;
+let previewUrl = null;
+let previewDimensions = null;
+let previewScale = 1;
+let registrationBusy = false;
+
+function bytesLabel(value) {
+    if (!Number.isFinite(value)) return "No disponible";
+    const units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit++; }
+    return `${value.toLocaleString("es", { maximumFractionDigits: 2 })} ${units[unit]}`;
+}
+
+function releasePreview() {
+    byId("local-preview-section").hidden = true;
+    byId("local-preview").removeAttribute("src");
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = null;
+    previewDimensions = null;
+}
+
+function resetInspection() {
+    inspectionAbort?.abort();
+    inspectionText = null;
+    byId("register-image").disabled = true;
+    byId("download-inspection").disabled = true;
+    byId("inspection-summary").replaceChildren();
+    byId("inspection-summary").hidden = true;
+    byId("inspection-details").hidden = true;
+    byId("inspection-json").textContent = "";
+    byId("local-next").hidden = true;
+    releasePreview();
+}
+
+function setPreviewScale(scale) {
+    if (!previewDimensions) return;
+    previewScale = Math.max(.05, Math.min(8, scale));
+    byId("local-preview").style.width = `${previewDimensions.width * previewScale}px`;
+    byId("local-preview").style.height = `${previewDimensions.height * previewScale}px`;
+    byId("preview-scale").textContent = `${Math.round(previewScale * 100)}%`;
+}
+
+function fitPreview() {
+    if (!previewDimensions) return;
+    const area = byId("local-viewport");
+    setPreviewScale(Math.min(1, area.clientWidth / previewDimensions.width, area.clientHeight / previewDimensions.height));
+    area.scrollLeft = area.scrollTop = 0;
+}
+
+async function inspectLocalFile() {
+    const generation = ++localGeneration;
+    resetInspection();
+    const file = localFile;
+    byId("inspect-again").disabled = !file;
+    if (!file) return;
+    const controller = new AbortController();
+    inspectionAbort = controller;
+    byId("local-status").textContent = `Inspección de ${file.name} (${bytesLabel(file.size)}) · lectura de 33 bytes…`;
+    try {
+        const header = await file.slice(0, 33).arrayBuffer();
+        if (generation !== localGeneration) return;
+        const query = new URLSearchParams({ name: file.name, sizeBytes: String(file.size), tileSize: byId("inspect-tile-size").value });
+        const response = await fetch(`/api/png/inspect?${query}`, {
+            method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: header, signal: controller.signal
+        });
+        const raw = await response.text();
+        const report = JSON.parse(raw);
+        if (generation !== localGeneration) return;
+        if (!response.ok) throw new Error(report.error || `Inspección HTTP ${response.status}`);
+        inspectionText = raw;
+        byId("register-image").disabled = registrationBusy;
+        byId("registration-id").value = file.name.replace(/\.png$/i, "").normalize("NFKD")
+            .replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 64) || `imagen_${Date.now()}`;
+        byId("registration-status").textContent = "Cabecera lista para registrar. Se guardarán metadata y niveles, no el original completo.";
+        byId("download-inspection").disabled = false;
+        const facts = [
+            ["Archivo", file.name], ["Tamaño comprimido", bytesLabel(file.size)],
+            ["Dimensiones", `${report.width.toLocaleString("es")} × ${report.height.toLocaleString("es")} px`],
+            ["Color", `${report.bitDepth} bits · tipo ${report.colorType} · ${report.channels} canales`],
+            ["Entrelazado", report.interlaced ? "Adam7 (requiere pipeline adicional)" : "No"],
+            ["Pirámide estimada", `${report.pyramid.maxZoom + 1} niveles · ${report.pyramid.totalTiles.toLocaleString("es")} tiles`],
+            ["RAM si se abre completa (RGBA8)", bytesLabel(report.fullDecodeRgbaBytes)],
+            ["Mínimo de buffers de filas", bytesLabel(report.minimumRowBuffersBytes)],
+            ["Disco de tiles estimado", bytesLabel(report.pyramid.estimatedWorkBytes)]
+        ];
+        for (const [label, value] of facts) {
+            const box = document.createElement("div");
+            const term = document.createElement("dt"); term.textContent = label;
+            const description = document.createElement("dd"); description.textContent = value;
+            box.append(term, description); byId("inspection-summary").append(box);
+        }
+        byId("inspection-summary").hidden = false;
+        byId("inspection-details").hidden = false;
+        byId("inspection-json").textContent = JSON.stringify(report, null, 2);
+        byId("local-status").textContent = `Cabecera válida: ${file.name}. Se enviaron ${header.byteLength} bytes al servidor.`;
+        byId("local-next").hidden = false;
+        byId("local-next").textContent = "P1 verifica firma/IHDR/CRC, no la integridad completa. La ingesta y generación de tiles están pendientes. El servidor recibe un nombre, no una ruta ni acceso al archivo local. Las estimaciones no garantizan RAM/disco reales.";
+        if (report.width * report.height > 4_000_000 || file.size > 16 * 1024 * 1024) {
+            byId("local-next").textContent += " Vista previa omitida por tamaño: el original grande no se decodifica en el navegador.";
+            return;
+        }
+        const url = URL.createObjectURL(file);
+        let installed = false;
+        try {
+            const image = new Image(); image.id = "local-preview";
+            image.alt = `Vista previa local de ${file.name}`; image.draggable = false; image.src = url;
+            await image.decode();
+            if (generation !== localGeneration) return;
+            previewUrl = url; installed = true;
+            byId("local-preview").replaceWith(image);
+            previewDimensions = { width: image.naturalWidth, height: image.naturalHeight };
+            byId("local-preview-section").hidden = false;
+            fitPreview();
+        } catch (error) {
+            if (generation === localGeneration) {
+                byId("local-status").textContent = `Cabecera válida, pero la vista previa no se pudo decodificar: ${file.name}.`;
+            }
+        } finally {
+            if (!installed) URL.revokeObjectURL(url);
+        }
+    } catch (error) {
+        if (generation === localGeneration && error.name !== "AbortError") byId("local-status").textContent = error.message;
+    }
+}
+
+byId("local-file").addEventListener("change", () => {
+    localFile = byId("local-file").files[0] || null;
+    if (!localFile) { ++localGeneration; resetInspection(); byId("inspect-again").disabled = true; return; }
+    inspectLocalFile();
+});
+byId("inspect-again").addEventListener("click", inspectLocalFile);
+byId("inspect-tile-size").addEventListener("change", () => { if (localFile) inspectLocalFile(); });
+byId("clear-local").addEventListener("click", () => {
+    ++localGeneration; resetInspection(); localFile = null;
+    byId("local-file").value = ""; byId("inspect-again").disabled = true;
+    byId("local-status").textContent = "Ningún archivo seleccionado.";
+});
+byId("download-inspection").addEventListener("click", () => {
+    if (!inspectionText) return;
+    const url = URL.createObjectURL(new Blob([inspectionText], { type: "application/json" }));
+    const link = document.createElement("a"); link.href = url; link.download = "p1-inspeccion.json";
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+byId("preview-in").addEventListener("click", () => setPreviewScale(previewScale * 1.25));
+byId("preview-out").addEventListener("click", () => setPreviewScale(previewScale / 1.25));
+byId("preview-native").addEventListener("click", () => setPreviewScale(1));
+byId("preview-fit").addEventListener("click", fitPreview);
+
+async function refreshCatalog() {
+    const response = await fetch("/api/images", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Catálogo HTTP ${response.status}`);
+    const ids = await response.json();
+    const select = byId("image"); const previous = select.value;
+    select.replaceChildren(...ids.map(id => new Option(id, id)));
+    if (ids.includes(previous)) select.value = previous;
+    return ids;
+}
+
+async function checkImageStatus() {
+    const id = byId("image").value;
+    if (!id) return;
+    try {
+        const response = await fetch(`/api/image/${encodeURIComponent(id)}/status`, { cache: "no-store" });
+        if (!response.ok) throw new Error(`Estado HTTP ${response.status}`);
+        const state = await response.json();
+        if (byId("image").value !== id) return;
+        byId("catalog-status").textContent = `${id}: ${state.state}; ${state.processedTiles}/${state.totalTiles} tiles; ${state.message}${state.error ? `; ${state.error}` : ""}`;
+    } catch (error) { byId("catalog-status").textContent = error.message; }
+}
+
+byId("register-image").addEventListener("click", async () => {
+    if (!localFile || !inspectionText || registrationBusy || !byId("registration-id").reportValidity()) return;
+    const id = byId("registration-id").value;
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) { byId("registration-status").textContent = "Escribe un identificador: letras, números, guion o guion bajo."; return; }
+    const file = localFile; const generation = localGeneration;
+    const tileSize = JSON.parse(inspectionText).pyramid.tileSize;
+    registrationBusy = true; byId("register-image").disabled = true;
+    byId("registration-status").textContent = `Registrando ${id}…`;
+    try {
+        const header = await file.slice(0, 33).arrayBuffer();
+        const query = new URLSearchParams({ imageId: id, name: file.name, sizeBytes: String(file.size), tileSize: String(tileSize) });
+        const response = await fetch(`/api/images?${query}`, {
+            method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: header
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `Registro HTTP ${response.status}`);
+        await refreshCatalog();
+        if (generation === localGeneration) byId("registration-status").textContent = `Registrada ${id}: ${result.state}. Metadata guardada; falta transferir el original y generar tiles en P3.`;
+    } catch (error) {
+        if (generation === localGeneration) byId("registration-status").textContent = error.message;
+    } finally {
+        registrationBusy = false; byId("register-image").disabled = !inspectionText;
+    }
+});
+byId("refresh-catalog").addEventListener("click", async () => {
+    try { await refreshCatalog(); await selectImage(); }
+    catch (error) { byId("catalog-status").textContent = error.message; }
+});
+byId("check-image-status").addEventListener("click", checkImageStatus);
+let previewDrag = null;
+byId("local-viewport").addEventListener("pointerdown", event => {
+    if (event.pointerType !== "mouse" || event.button !== 0) return;
+    const area = event.currentTarget;
+    previewDrag = { x: event.clientX, y: event.clientY, left: area.scrollLeft, top: area.scrollTop };
+    area.setPointerCapture(event.pointerId); area.classList.add("dragging"); event.preventDefault();
+});
+byId("local-viewport").addEventListener("pointermove", event => {
+    if (!previewDrag) return;
+    event.currentTarget.scrollLeft = previewDrag.left + previewDrag.x - event.clientX;
+    event.currentTarget.scrollTop = previewDrag.top + previewDrag.y - event.clientY;
+});
+for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    byId("local-viewport").addEventListener(type, event => { previewDrag = null; event.currentTarget.classList.remove("dragging"); });
+}
+window.addEventListener("pagehide", () => { ++localGeneration; inspectionAbort?.abort(); releasePreview(); });
+
 function log(message) {
     logLines.push(`${new Date().toLocaleTimeString()} ${message}`);
     if (logLines.length > 150) logLines.shift();
@@ -50,7 +271,7 @@ function cancelCurrent() {
 }
 
 function updateLoadButton() {
-    byId("load").disabled = !protocolReady || !metadata;
+    byId("load").disabled = !protocolReady || !metadata || metadata.state !== "ready" || metadata.maxZoom != null;
 }
 
 async function selectImage() {
@@ -66,19 +287,22 @@ async function selectImage() {
         const result = await response.json();
         if (generation !== metadataGeneration) return;
         metadata = result;
+        checkImageStatus();
         byId("metadata").textContent = `${metadata.width} × ${metadata.height}; tiles de ${metadata.tileSize}px; ${metadata.totalTiles} tiles; ${metadata.format}`;
         byId("x").max = Math.ceil(metadata.width / metadata.tileSize) - 1;
         byId("y").max = Math.ceil(metadata.height / metadata.tileSize) - 1;
         byId("x").value = byId("y").value = 0;
         updateLoadButton();
-        if (protocolReady) loadRegion();
+        if (metadata.state !== "ready") byId("status").textContent = `Imagen ${metadata.state}: todavía no tiene tiles preparados.`;
+        else if (metadata.maxZoom != null) byId("status").textContent = "Imagen multinivel: transporte pendiente de P5.";
+        else if (protocolReady) loadRegion();
     } catch (error) {
         if (generation === metadataGeneration) byId("status").textContent = error.message;
     }
 }
 
 function loadRegion() {
-    if (!metadata || !protocolReady || !byId("controls").reportValidity()) return;
+    if (!metadata || metadata.state !== "ready" || metadata.maxZoom != null || !protocolReady || !byId("controls").reportValidity()) return;
     const x = Number(byId("x").value);
     const y = Number(byId("y").value);
     if (!Number.isInteger(x) || !Number.isInteger(y)) return;
@@ -256,12 +480,12 @@ document.querySelectorAll("[data-dx]").forEach(button => button.addEventListener
 async function start() {
     byId("connection").textContent = `Origen HTTP: ${location.origin}`;
     try {
-        const response = await fetch("/api/images");
-        log(`HTTP ${response.status} ${response.url}`);
-        if (!response.ok) throw new Error(`Catálogo HTTP ${response.status}`);
-        const images = await response.json();
-        if (!images.length) throw new Error("No hay imágenes en el catálogo");
-        for (const id of images) byId("image").add(new Option(id, id));
+        const images = await refreshCatalog();
+        if (!images.length) {
+            byId("metadata").textContent = "No hay tiles preparados. Puedes abrir e inspeccionar un PNG arriba.";
+            byId("status").textContent = "Catálogo vacío.";
+            return;
+        }
         await selectImage();
         connect();
     } catch (error) {

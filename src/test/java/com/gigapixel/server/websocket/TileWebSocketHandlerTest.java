@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.gigapixel.server.model.TileKey;
 import com.gigapixel.server.service.MetadataService;
+import com.gigapixel.server.service.ImagesLayout;
 import com.gigapixel.server.service.TileService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,7 +38,8 @@ class TileWebSocketHandlerTest {
 
     @BeforeEach
     void setup() throws Exception {
-        metadata = new MetadataService(mapper, directory.toString(), true);
+        metadata = new MetadataService(mapper, new ImagesLayout(directory.resolve("originales").toString(),
+                directory.resolve("work").toString()), true);
         tiles = mock(TileService.class);
         when(tiles.readTile(any())).thenReturn(new byte[]{1, 2, 3});
         handler = new TileWebSocketHandler(mapper, metadata, tiles, Runnable::run, clock::get);

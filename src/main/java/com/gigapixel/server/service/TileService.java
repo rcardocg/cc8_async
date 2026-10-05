@@ -23,17 +23,20 @@ import java.util.Locale;
 public class TileService {
     public static final int MAX_TILE_BYTES = 512 * 1024;
     private final MetadataService metadata;
+    private final Path root;
 
     public TileService(MetadataService metadata) {
         this.metadata = metadata;
+        this.root = metadata.directory();
     }
 
     public byte[] readTile(TileKey key) throws IOException {
         ImageMetadata image = metadata.validateTile(key);
         if (MetadataService.DEMO_ID.equals(key.imageId())) return demoTile(key, image);
 
-        Path root = metadata.directory().toRealPath();
-        Path file = root.resolve(key.imageId()).resolve(key.x() + "_" + key.y() + "." + image.format()).toRealPath();
+        Path candidate = root.resolve(key.imageId()).resolve(key.x() + "_" + key.y() + "." + image.format()).normalize();
+        if (!candidate.startsWith(root)) throw new IOException("Tile fuera del directorio de imágenes");
+        Path file = candidate.toRealPath();
         if (!file.startsWith(root)) throw new IOException("Tile fuera del directorio de imágenes");
         byte[] bytes;
         try (var stream = Files.newInputStream(file)) {

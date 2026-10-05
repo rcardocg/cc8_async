@@ -1,0 +1,10 @@
+# Copiar a config/local.properties y activar:
+# SPRING_CONFIG_IMPORT=optional:file:./config/local.properties
+# Usar rutas absolutas; no incluir este archivo local en Git.
+# Fedora:
+# images.originals-directory=/home/usuario/gpx/originales
+# images.directory=/home/usuario/gpx/work
+# Windows: usar / para evitar escapes de Java properties.
+# images.originals-directory=D:/gpx/originales
+# images.directory=D:/w
+# server.port=8081

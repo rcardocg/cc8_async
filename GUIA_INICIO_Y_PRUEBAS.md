@@ -27,7 +27,7 @@ En la Terminal 1:
 ```powershell
 Set-Location -LiteralPath "C:\Users\crist\Desktop\proyecto cc8_2\cc8_async"
 java -version
-Test-Path -LiteralPath ".build/server-0.0.1-SNAPSHOT.jar"
+Test-Path -LiteralPath ".build/server.jar"
 ```
 
 **Esperado:** Java versión **21** y `True` para el archivo JAR. Al preparar esta
@@ -38,7 +38,7 @@ Si aparece `False`, compila siguiendo la sección 7 antes de continuar.
 ### 2.2. Encender el servidor
 
 ```powershell
-java -jar ".build/server-0.0.1-SNAPSHOT.jar" --images.demo-enabled=true
+java -jar ".build/server.jar" --images.demo-enabled=true
 ```
 
 Deja esta terminal abierta. Que el comando no devuelva inmediatamente el prompt
@@ -197,7 +197,7 @@ Si quieres más información de HTTP y del ciclo de conexión WebSocket, detén 
 con **Ctrl+C** y reinícialo así:
 
 ```powershell
-java -jar ".build/server-0.0.1-SNAPSHOT.jar" --images.demo-enabled=true --logging.level.org.springframework.web.servlet.DispatcherServlet=DEBUG --logging.level.org.springframework.web.socket=DEBUG
+java -jar ".build/server.jar" --images.demo-enabled=true --logging.level.org.springframework.web.servlet.DispatcherServlet=DEBUG --logging.level.org.springframework.web.socket=DEBUG
 ```
 
 Repite una consulta HTTP o recarga el visor. Los logs de Spring ayudan a observar
@@ -283,7 +283,7 @@ empaquetado y la demo local no necesita Internet.
 Para iniciar en otro puerto:
 
 ```powershell
-java -jar ".build/server-0.0.1-SNAPSHOT.jar" --server.port=8082 --images.demo-enabled=true
+java -jar ".build/server.jar" --server.port=8082 --images.demo-enabled=true
 ```
 
 En ese caso usa **http://localhost:8082/** y cambia también el puerto en las consultas

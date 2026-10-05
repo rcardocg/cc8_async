@@ -39,6 +39,7 @@
 
     <build>
         <directory>${gigapixel.buildDirectory}</directory>
+        <finalName>server</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

@@ -1,6 +1,6 @@
 # GTP/1 — Protocolo de control de transferencia de tiles
 
-Fecha: 2026-10-02. Este contrato describe el código implementado, no la propuesta
+Fecha: 2026-10-05. Este contrato describe el código implementado, no la propuesta
 histórica. GTP significa «Gigapixel Tile Protocol» dentro de este proyecto; no se
 presenta como estándar registrado.
 
@@ -9,9 +9,26 @@ presenta como estándar registrado.
 1. El servidor Java entrega HTML/CSS/JS mediante HTTP, desde `/`.
 2. `GET /api/images` devuelve un arreglo de identificadores del catálogo.
 3. `GET /api/image/{id}/metadata` devuelve `imageId`, `width`, `height`, `tileSize`,
-   `totalTiles`, `maxZoom` y `format`. Imagen inexistente: HTTP 404.
+   `totalTiles`, `maxZoom`, `format`, `state`, `levels`, `completedLevels` y
+   `availableQualities`. Imagen inexistente: HTTP 404. Niveles previstos no implican tiles disponibles.
 4. El cliente abre `/ws/tiles` en el mismo origen (`ws` o `wss`).
 5. El servidor responde `ready` con versión y límites; entonces se aceptan solicitudes.
+
+P1 añade `POST /api/png/inspect?name=archivo.png&sizeBytes=N&tileSize=256` para
+selección local desde el cliente. Cuerpo `application/octet-stream` de exactamente
+33 bytes (firma/IHDR/CRC); respuesta JSON con dimensiones y estimaciones. HTTP
+400 ante cabecera/parámetros inválidos; 413 si el cuerpo excede el límite. El
+tamaño del archivo es declarado por el cliente, no verificado contra un original
+almacenado. La respuesta no se cachea. Este endpoint no ingiere archivos, no
+modifica el catálogo y no inicia transferencias GTP. La vista previa local de PNG
+pequeños tampoco usa WebSocket. Procedimiento en [pruebas_png_p1.md](pruebas_png_p1.md).
+
+P2 añade `POST /api/images` con cabecera binaria de 33 bytes y parámetros
+`imageId`, `name`, `sizeBytes`, `tileSize`. Devuelve HTTP 202, metadata pendiente
+y `Location` del estado. Duplicados/reservados: 409; parámetros/cabecera inválidos:
+400; cuerpo excesivo: 413. Persiste `meta.json` sin transferir el original completo.
+`GET /api/image/{id}/status` devuelve progreso y `sourceState`. Un registro pendiente
+no puede solicitar tiles. Contrato y pruebas en [registro_p2.md](registro_p2.md).
 
 Mensajes JSON en frames de texto. Todos contienen `version: 1` y `action`.
 Las cadenas identificadoras de mensajes deben ser no vacías, hasta 128 caracteres.

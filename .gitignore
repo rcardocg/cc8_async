@@ -2,5 +2,7 @@
 /bin/
 /.build/
 *.class
-/data/images/
+/data/
+/work/
+/config/local.properties
 *.log

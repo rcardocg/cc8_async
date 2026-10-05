@@ -4,9 +4,28 @@
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const { chromium } = require("playwright");
+const { deflateSync } = require("node:zlib");
+
+function pngChunk(type, data) {
+    const content = Buffer.concat([Buffer.from(type), data]);
+    let crc = 0xffffffff;
+    for (const byte of content) {
+        crc ^= byte;
+        for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+    const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
+    const checksum = Buffer.alloc(4); checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+    return Buffer.concat([length, content, checksum]);
+}
+
+function pngHeader(width, height) {
+    const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(width); ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8; ihdr[9] = 2;
+    return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), pngChunk("IHDR", ihdr)]);
+}
 
 async function main() {
-    const jar = process.argv[2] || ".build/server-0.0.1-SNAPSHOT.jar";
+    const jar = process.argv[2] || ".build/server.jar";
     const server = spawn("java", ["-jar", jar, "--server.port=0", "--images.demo-enabled=true",
         `--images.directory=.build/browser-empty-${Date.now()}`], { stdio: ["ignore", "pipe", "pipe"] });
     let browser;
@@ -25,14 +44,18 @@ async function main() {
             server.once("exit", code => { clearTimeout(timeout); reject(new Error(`Servidor terminó (${code}): ${output}`)); });
         });
         const base = `http://localhost:${port}`;
-        browser = await chromium.launch({ headless: true, channel: process.env.BROWSER_CHANNEL || "msedge" });
+        browser = await chromium.launch({ headless: true, ...(process.env.BROWSER_EXECUTABLE_PATH
+            ? { executablePath: process.env.BROWSER_EXECUTABLE_PATH }
+            : { channel: process.env.BROWSER_CHANNEL || "msedge" }) });
         const context = await browser.newContext();
         const page = await context.newPage();
         const errors = [];
         const external = [];
         const frames = [];
+        const inspections = [];
         context.on("request", request => {
             if (new URL(request.url()).origin !== base) external.push(request.url());
+            if (new URL(request.url()).pathname === "/api/png/inspect") inspections.push(request.postDataBuffer().length);
         });
         page.on("pageerror", error => errors.push(error.message));
         page.on("websocket", socket => socket.on("framereceived", event => {
@@ -59,8 +82,48 @@ async function main() {
         const accepted = frames.find(frame => frame.action === "request_accepted");
         assert.ok(trace.includes(`request_id=${accepted.request_id}`));
 
+        // Abrir archivo local: solo 33 bytes viajan por HTTP, vista pequeña con zoom.
+        const pixels = Buffer.alloc((128 * 3 + 1) * 64);
+        const small = Buffer.concat([pngHeader(128, 64), pngChunk("IDAT", deflateSync(pixels)), pngChunk("IEND", Buffer.alloc(0))]);
+        await page.locator("#local-file").setInputFiles({ name: "pequena.png", mimeType: "image/png", buffer: small });
+        await page.waitForFunction(() => !document.getElementById("local-preview-section").hidden);
+        assert.ok((await page.locator("#inspection-summary").textContent()).includes("128 × 64 px"));
+        await page.locator("#preview-native").click();
+        assert.equal(await page.locator("#preview-scale").textContent(), "100%");
+        await page.locator("#preview-in").click();
+        assert.equal(await page.locator("#preview-scale").textContent(), "125%");
+        const download = page.waitForEvent("download");
+        await page.locator("#download-inspection").click();
+        assert.equal((await download).suggestedFilename(), "p1-inspeccion.json");
+
+        await page.locator("#registration-id").fill("browser_p2");
+        await page.locator("#register-image").click();
+        await page.waitForFunction(() => document.getElementById("registration-status").textContent.includes("Registrada browser_p2: pending"));
+        await page.locator("#image").selectOption("browser_p2");
+        await page.waitForFunction(() => document.getElementById("catalog-status").textContent.includes("browser_p2: pending"));
+        assert.equal(await page.locator("#load").isEnabled(), false);
+        assert.equal(await page.locator("#tiles img").count(), 0);
+        await page.locator("#register-image").click();
+        await page.waitForFunction(() => document.getElementById("registration-status").textContent.includes("duplicado"));
+        await page.locator("#image").selectOption("demo_numeros");
+        await complete(page);
+
+        // Dimensiones grandes en cabecera sintética: nunca se intenta decodificar el cuerpo.
+        await page.locator("#local-file").setInputFiles({ name: "grande.png", mimeType: "image/png", buffer: pngHeader(100000, 100000) });
+        await page.waitForFunction(() => document.getElementById("local-status").textContent.includes("Cabecera válida: grande.png"));
+        assert.equal(await page.locator("#local-preview-section").isVisible(), false);
+        assert.ok((await page.locator("#local-next").textContent()).includes("omitida por tamaño"));
+        await page.locator("#inspect-tile-size").selectOption("512");
+        await page.waitForFunction(() => document.getElementById("inspection-json").textContent.includes('"tileSize": 512'));
+        await page.locator("#local-file").setInputFiles({ name: "falso.png", mimeType: "image/png", buffer: Buffer.alloc(33) });
+        await page.waitForFunction(() => document.getElementById("local-status").textContent.includes("se requiere PNG"));
+        assert.equal(await page.locator("#download-inspection").isEnabled(), false);
+        await page.locator("#clear-local").click();
+        assert.equal(await page.locator("#local-status").textContent(), "Ningún archivo seleccionado.");
+        assert.ok(inspections.length >= 4 && inspections.every(size => size === 33));
+
         // Omisión deliberada del ACK de aplicación y un segundo cliente independiente.
-        await page.locator("summary").click();
+        await page.locator("#catalog-view summary").click();
         await page.locator("#drop-ack").check();
         await page.locator("#load").click();
         const second = await context.newPage();
@@ -100,7 +163,7 @@ async function main() {
         assert.equal(await page.locator(".tile").getAttribute("title"), "Tile 15,15; píxeles X=3840–4095, Y=3840–4095");
         assert.deepEqual(external, [], "Todos los recursos deben provenir del servidor Java");
         assert.deepEqual(errors, [], "No debe haber errores JavaScript en el navegador");
-        console.log("PASS: PNG decodificado, dos clientes, recuperación de ACK, presión de memoria, reemplazo de región, cancelación, reconexión, recursos locales, puerto dinámico, traza y límites de píxeles.");
+        console.log("PASS: PNG local, preview/zoom, registro P2 pendiente, catálogo/estado/duplicados; tiles GTP, dos clientes, recuperación, memoria, cancelación, reconexión y recursos locales.");
     } finally {
         if (browser) await browser.close();
         server.kill();
