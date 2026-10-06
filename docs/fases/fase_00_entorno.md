@@ -123,3 +123,26 @@ Herramientas de navegador instaladas solo en `/tmp/opencode`, fuera del proyecto
 **Límites:** abrir un original no entrega su ruta ni contenido a Java; el tamaño
 HTTP es declarado por el navegador. La integración de lectura/transferencia por
 bloques, ingesta y visor multinivel de originales grandes sigue pendiente.
+
+## 2026-10-05 · Reproducción Windows y continuidad Fedora
+
+**Objetivo:** mantener ambos ambientes y reproducir P2 antes de conectar P3.
+
+**Fallo observado:** el traspaso describía P2 como no compilado, pero el repositorio
+ya contenía su cierre Fedora, contrato y pruebas. Maven no estaba en PATH de Windows;
+no hay Fedora/WSL ejecutable en este equipo.
+
+**Cambio:** reutilizadas herramientas existentes fuera del repositorio, PATH/NODE_PATH
+solo por sesión; código Java y scripts de pruebas compartidos, con instrucciones
+Bash/cmd/PowerShell. La configuración P3 usa `GTP_INGEST_MEMORY_MIB` y raíces portables.
+Se conservan los binarios modificados previamente en `target/classes`; builds en `.build`.
+`protocolo.md` y `plan-temp.html` ya están rastreados en esta copia y se actualizan.
+
+**Verificación Windows:** P2 base: 40 casos, 39 aprobados y 1 omitido por POSIX; E2E Edge
+aprobado. Con P3: 53 casos, 52 aprobados y la misma omisión. Ejecutados `build.cmd` y
+`gtp.cmd`; este último desde otra carpeta con ruta de proyecto con espacios. Git Bash:
+análisis de sintaxis y `gtp.sh cli help` correctos, sin atribuirlo a Fedora.
+
+**Límites:** repetir las nuevas pruebas en Fedora y completar matriz de permisos/recursos
+con originales reales. Evidencia previa Fedora preservada. Procedimientos/resultados
+en [verificacion.md](../verificacion.md) e [ingesta_p3.md](../ingesta_p3.md).

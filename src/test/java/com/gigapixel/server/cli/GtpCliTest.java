@@ -97,7 +97,7 @@ class GtpCliTest {
         assertEquals(0, result.code(), result.err());
         JsonNode json = mapper.readTree(result.out());
         assertEquals("preflight_ok", json.path("status").asText());
-        assertFalse(json.path("ingestionImplemented").asBoolean());
+        assertTrue(json.path("ingestionImplemented").asBoolean());
         assertFalse(Files.exists(work.getParent()));
         assertArrayEquals(before, Files.readAllBytes(image));
         assertTrue(json.path("notes").toString().contains("Solo cabecera"));
@@ -121,7 +121,7 @@ class GtpCliTest {
     }
 
     @Test
-    void rejectsIngestWithoutDryRunAndOriginalInsideDiscardableWork() throws Exception {
+    void rejectsRealIngestWithoutIdAndOriginalInsideDiscardableWork() throws Exception {
         Path image = header("small.png", 32, 32, 8, 2, 0);
         assertEquals(1, run("ingest", image.toString()).code());
         Result inside = run("ingest", image.toString(), "--dry-run", "--work", directory.toString());

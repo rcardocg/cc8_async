@@ -16,7 +16,7 @@
     </header>
     <section class="panel" aria-labelledby="open-heading">
         <h2 id="open-heading">1. Abrir una imagen de tu equipo</h2>
-        <p>La imagen puede estar en cualquier carpeta. Solo se envía su cabecera (33 bytes), nunca el original completo.</p>
+        <p>Inspeccionar y registrar envía solo 33 bytes. El procesamiento P3 es una acción separada: transfiere el PNG al servidor en bloques de hasta 1 MiB.</p>
         <div class="file-controls">
             <label class="file-picker">Elegir PNG <input id="local-file" type="file" accept="image/png,.png"></label>
             <label>Tamaño de tile para estimar <select id="inspect-tile-size"><option value="256">256 px</option><option value="512">512 px</option></select></label>
@@ -32,7 +32,13 @@
             <label>Identificador del registro <input id="registration-id" type="text" maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" placeholder="mi_imagen"></label>
             <button id="register-image" type="button" disabled>Registrar imagen · P2</button>
         </div>
-        <p id="registration-status" role="status">P2 guarda metadata y niveles previstos; el original y los tiles siguen pendientes de P3.</p>
+        <p id="registration-status" role="status">P2 guarda metadata y niveles previstos. Después puedes transferir y procesar con P3.</p>
+        <div class="file-controls">
+            <button id="ingest-image" type="button">Transferir / reanudar y procesar · P3</button>
+            <button id="stop-ingest" type="button" disabled>Detener transferencia / procesamiento</button>
+            <button id="reset-upload" type="button">Reiniciar transferencia del ID</button>
+        </div>
+        <p id="ingest-status" role="status" aria-live="polite">Requiere un ID registrado y el mismo PNG seleccionado. PNG sin Adam7 de hasta 8 bits. El original local se conserva.</p>
         <div id="local-preview-section" hidden>
             <h3>Vista previa local · PNG pequeño</h3>
             <p>Esta vista no prueba la transferencia GTP. Se habilita hasta 4 megapíxeles y 16 MiB de archivo.</p>

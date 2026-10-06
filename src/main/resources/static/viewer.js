@@ -115,7 +115,7 @@ async function inspectLocalFile() {
         byId("inspection-json").textContent = JSON.stringify(report, null, 2);
         byId("local-status").textContent = `Cabecera válida: ${file.name}. Se enviaron ${header.byteLength} bytes al servidor.`;
         byId("local-next").hidden = false;
-        byId("local-next").textContent = "P1 verifica firma/IHDR/CRC, no la integridad completa. La ingesta y generación de tiles están pendientes. El servidor recibe un nombre, no una ruta ni acceso al archivo local. Las estimaciones no garantizan RAM/disco reales.";
+        byId("local-next").textContent = "P1 verifica firma/IHDR/CRC, no la integridad completa. P3 transfiere y procesa solo al pulsar su botón. El servidor recibe un nombre, no una ruta ni acceso al archivo local. Las estimaciones no garantizan RAM/disco reales.";
         if (report.width * report.height > 4_000_000 || file.size > 16 * 1024 * 1024) {
             byId("local-next").textContent += " Vista previa omitida por tamaño: el original grande no se decodifica en el navegador.";
             return;
@@ -219,6 +219,86 @@ byId("refresh-catalog").addEventListener("click", async () => {
     catch (error) { byId("catalog-status").textContent = error.message; }
 });
 byId("check-image-status").addEventListener("click", checkImageStatus);
+
+let ingestion = null;
+async function ingestionRequest(path, options = {}) {
+    const response = await fetch(path, { cache: "no-store", ...options });
+    const body = response.status === 204 ? null : await response.json();
+    if (!response.ok) throw new Error(body?.error || `Ingesta HTTP ${response.status}`);
+    return body;
+}
+
+byId("ingest-image").addEventListener("click", async () => {
+    if (ingestion) return;
+    const file = localFile, id = byId("registration-id").value;
+    if (!file || !inspectionText || !/^[a-zA-Z0-9_-]{1,64}$/.test(id)) {
+        byId("ingest-status").textContent = "Selecciona e inspecciona el PNG y escribe su ID registrado."; return;
+    }
+    const report = JSON.parse(inspectionText);
+    if (report.interlaced || report.bitDepth === 16) {
+        byId("ingest-status").textContent = "P3 inicial no procesa Adam7 ni 16 bits. Inspección y registro siguen disponibles."; return;
+    }
+    const job = { id, abort: new AbortController(), stopping: false, processing: false };
+    ingestion = job;
+    byId("ingest-image").disabled = byId("reset-upload").disabled = true;
+    byId("stop-ingest").disabled = false;
+    const base = `/api/image/${encodeURIComponent(id)}`;
+    try {
+        const metadata = await ingestionRequest(`${base}/metadata`);
+        const upload = await ingestionRequest(`${base}/upload`);
+        if (file.size !== upload.declaredSizeBytes || metadata.width !== report.width || metadata.height !== report.height) {
+            throw new Error("El archivo no coincide con el registro. Para cambiar de original usa otro ID.");
+        }
+        let offset = upload.receivedBytes;
+        while (offset < file.size) {
+            if (job.stopping) throw new Error("Transferencia detenida. Puedes reanudar con el mismo archivo e ID.");
+            const chunk = file.slice(offset, Math.min(file.size, offset + upload.maxChunkBytes));
+            const result = await ingestionRequest(`${base}/upload?offset=${offset}`, {
+                method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: chunk, signal: job.abort.signal
+            });
+            offset = result.receivedBytes;
+            byId("ingest-status").textContent = `${id}: transferidos ${bytesLabel(offset)} / ${bytesLabel(file.size)}.`;
+        }
+        if (job.stopping) throw new Error("Transferencia detenida; el servidor conserva los bloques recibidos.");
+        await ingestionRequest(`${base}/ingest`, { method: "POST" });
+        job.processing = true;
+        if (job.stopping) await ingestionRequest(`${base}/ingest/cancel`, { method: "POST" });
+        for (;;) {
+            const state = await ingestionRequest(`${base}/status`);
+            byId("ingest-status").textContent = `${id}: ${state.state}; ${state.processedTiles}/${state.totalTiles} tiles. ${state.error || state.message}`;
+            if (state.state !== "processing") break;
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        await refreshCatalog();
+        if (byId("image").value === id) await selectImage();
+    } catch (error) {
+        byId("ingest-status").textContent = error.name === "AbortError"
+            ? "Transferencia detenida; consulta/reanuda con el mismo PNG. Los bloques confirmados se conservan."
+            : error.message;
+    } finally {
+        ingestion = null;
+        byId("ingest-image").disabled = byId("reset-upload").disabled = false;
+        byId("stop-ingest").disabled = true;
+    }
+});
+
+byId("stop-ingest").addEventListener("click", async () => {
+    if (!ingestion) return;
+    ingestion.stopping = true;
+    if (!ingestion.processing) ingestion.abort.abort();
+    else {
+        try { await ingestionRequest(`/api/image/${encodeURIComponent(ingestion.id)}/ingest/cancel`, { method: "POST" }); }
+        catch (error) { byId("ingest-status").textContent = error.message; }
+    }
+});
+byId("reset-upload").addEventListener("click", async () => {
+    const id = byId("registration-id").value;
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id) || ingestion) return;
+    try {
+        await ingestionRequest(`/api/image/${encodeURIComponent(id)}/upload`, { method: "DELETE" });
+        byId("ingest-status").textContent = `${id}: copia temporal de transferencia eliminada; el original local se conserva.`;
+    } catch (error) { byId("ingest-status").textContent = error.message; }
+});
 let previewDrag = null;
 byId("local-viewport").addEventListener("pointerdown", event => {
     if (event.pointerType !== "mouse" || event.button !== 0) return;

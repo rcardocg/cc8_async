@@ -136,4 +136,6 @@ public class MetadataService {
     public Path directory() {
         return directory;
     }
+
+    public ImageRegistry registry() { return registry; }
 }

@@ -59,8 +59,8 @@ Estado nuevo:
 - `message` explica qué falta; `error` queda vacío salvo un fallo real.
 - El servicio dispone de persistencia de `failed` con causa para integración P3;
   no hay endpoint público que permita simular trabajo completado.
-- `processing` y `ready` para registros nuevos se incorporarán al decoder P3.
-  P2 rechaza manifests que pretendan declarar esos estados sin procesamiento.
+- `processing` y `ready` los incorpora P3 con `schemaVersion=2` y comprobante de
+  publicación. Los manifests P2 (`schemaVersion=1`) siguen rechazando esos estados.
 
 El catálogo plano anterior sigue en `catalog.json`, con `maxZoom=null` y estado
 `ready`; sus tiles se validan al leerlos. Sus entradas se cargan al arrancar. Los
@@ -98,14 +98,16 @@ Verificación automática: 40 pruebas Java y E2E Chromium en Fedora. Incluye rec
 desde disco, duplicados/reservados, manifiestos corruptos, límites z/q/bordes,
 rechazo HTTP de cuerpos grandes y retorno a la demo después de elegir un pending.
 
-## Punto de inicio para P3
+## Conexión con P3
 
-La fuente original no está disponible en el servidor. P3 debe conectar el registro
-con lectura/transferencia por bloques o streaming: archivo por identificador,
-posición validada, límites de buffers y disco y comprobación completa de integridad.
-Una cabecera/nombre/tamaño iguales no demuestran que sea el mismo contenido.
+Tras registrar en P2, la fuente todavía no está disponible en el servidor. El primer
+incremento P3 conecta el registro mediante subida por bloques o lectura desde
+`GTP_IMAGES`: posición validada, límites de buffers/disco y comprobación completa
+del PNG admitido. Una cabecera/nombre/tamaño iguales no demuestran identidad de contenido.
 
 Tras reiniciar, el usuario deberá volver a elegir el original si todavía está solo
-en el navegador; P2 no conserva permisos de lectura del explorador. Cuando exista
-una fuente completa validada, P3 iniciará `processing`, publicará niveles completos
-y finalmente `ready`. Después se integran calidad/transporte/visor multinivel.
+en el navegador; P2 no conserva permisos de lectura del explorador. P3 mantiene los
+bloques recibidos en work; requiere volver a seleccionar el mismo archivo para continuar
+la subida. Procesa una fuente completa, valida su integridad y publica la pirámide
+terminada como `ready`. Ver [ingesta_p3.md](ingesta_p3.md). Después se integran
+calidad/transporte/visor multinivel.

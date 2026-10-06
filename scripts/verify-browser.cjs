@@ -5,6 +5,10 @@ const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const { chromium } = require("playwright");
 const { deflateSync } = require("node:zlib");
+const { mkdtemp, mkdir, rm } = require("node:fs/promises");
+const { tmpdir } = require("node:os");
+const { join, resolve } = require("node:path");
+const { once } = require("node:events");
 
 function pngChunk(type, data) {
     const content = Buffer.concat([Buffer.from(type), data]);
@@ -25,9 +29,12 @@ function pngHeader(width, height) {
 }
 
 async function main() {
-    const jar = process.argv[2] || ".build/server.jar";
+    const jar = resolve(process.argv[2] || ".build/server.jar");
+    const temporary = await mkdtemp(join(tmpdir(), "gtp-browser-"));
+    await mkdir(join(temporary, "originales"));
     const server = spawn("java", ["-jar", jar, "--server.port=0", "--images.demo-enabled=true",
-        `--images.directory=.build/browser-empty-${Date.now()}`], { stdio: ["ignore", "pipe", "pipe"] });
+        `--images.originals-directory=${join(temporary, "originales")}`,
+        `--images.directory=${join(temporary, "work")}`], { stdio: ["ignore", "pipe", "pipe"] });
     let browser;
     let output = "";
     try {
@@ -65,7 +72,12 @@ async function main() {
         }));
 
         async function complete(target) {
-            await target.waitForFunction(() => document.getElementById("status").textContent.includes("12/12 confirmados; 0 fallidos"), null, { timeout: 15000 });
+            try {
+                await target.waitForFunction(() => document.getElementById("status").textContent.includes("12/12 confirmados; 0 fallidos"), null, { timeout: 20000, polling: 100 });
+            } catch (error) {
+                console.error("Diagnóstico E2E:", JSON.stringify({ errors, frames: frames.slice(-25), server: output.slice(-2000) }));
+                throw error;
+            }
             assert.equal(await target.locator("#tiles img").count(), 12);
             assert.ok(await target.locator("#tiles img").evaluateAll(images => images.every(image => image.complete && image.naturalWidth === 256)));
         }
@@ -105,6 +117,14 @@ async function main() {
         assert.equal(await page.locator("#tiles img").count(), 0);
         await page.locator("#register-image").click();
         await page.waitForFunction(() => document.getElementById("registration-status").textContent.includes("duplicado"));
+        await page.locator("#ingest-image").click();
+        await page.waitForFunction(() => document.getElementById("ingest-status").textContent.includes("browser_p2: ready"), null, { timeout: 30000 });
+        await page.locator("#check-image-status").click();
+        await page.waitForFunction(() => document.getElementById("catalog-status").textContent.includes("browser_p2: ready"));
+        assert.equal(await page.locator("#load").isEnabled(), false, "P3 genera tiles; el transporte multinivel es P5");
+        const prepared = await (await context.request.get(`${base}/api/image/browser_p2/metadata`)).json();
+        assert.deepEqual(prepared.completedLevels, [0]);
+        assert.deepEqual(prepared.availableQualities, [3]);
         await page.locator("#image").selectOption("demo_numeros");
         await complete(page);
 
@@ -163,10 +183,11 @@ async function main() {
         assert.equal(await page.locator(".tile").getAttribute("title"), "Tile 15,15; píxeles X=3840–4095, Y=3840–4095");
         assert.deepEqual(external, [], "Todos los recursos deben provenir del servidor Java");
         assert.deepEqual(errors, [], "No debe haber errores JavaScript en el navegador");
-        console.log("PASS: PNG local, preview/zoom, registro P2 pendiente, catálogo/estado/duplicados; tiles GTP, dos clientes, recuperación, memoria, cancelación, reconexión y recursos locales.");
+        console.log("PASS: PNG local, preview/zoom, registro P2 pendiente, catálogo/estado/duplicados; transferencia y procesamiento P3 ready; tiles GTP, dos clientes, recuperación, memoria, cancelación, reconexión y recursos locales.");
     } finally {
-        if (browser) await browser.close();
-        server.kill();
+        if (browser) await Promise.race([browser.close(), new Promise(resolve => { const timer = setTimeout(resolve, 5000); timer.unref(); })]);
+        if (server.exitCode === null && server.signalCode === null) { const exited = once(server, "exit"); server.kill(); await exited; }
+        await rm(temporary, { recursive: true, force: true });
     }
 }
 

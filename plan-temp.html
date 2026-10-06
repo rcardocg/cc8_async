@@ -17,7 +17,7 @@ a{color:#1f4fa3}
 </head>
 <body><main>
 <h1>GTP/1 · traspaso temporal de trabajo</h1>
-<p>CC8 · Java 21 / Spring Boot 3.2.4 · actualización 2026-10-04.</p>
+<p>CC8 · Java 21 / Spring Boot 3.2.4 · actualización 2026-10-05 · desarrollo Fedora y Windows.</p>
 <p class="aviso"><strong>Temporal, no es la entrega final.</strong> Sin estimaciones de duración.
 Se reemplazó el plan anterior para corregir la suposición de ZIP/TIFF: el usuario confirmó
 que <strong>todos los originales son PNG</strong>. No desarrollar extracción ni lectores de esos otros formatos.
@@ -33,8 +33,9 @@ Los originales se deben preprocesar con memoria acotada y navegar como un visor 
 
 <h2 id="contexto">1. Contexto y evaluación</h2>
 <ul>
-<li>Repositorio: <code>/home/rcardocg/Documentos/cc8_async</code>.</li>
-<li><code>protocolo.md</code> en la raíz: especificación objetivo aprobada, todavía sin versionar.
+<li>Dos ambientes preservados: Fedora/Bash y Windows/cmd o PowerShell. Raíces mediante variables;
+no incorporar rutas personales en el código/configuración compartida.</li>
+<li><code>protocolo.md</code> en la raíz: especificación objetivo aprobada y versionada.
 <code>docs/protocolo.md</code>: contrato GTP/1 v1 implementado. Distinguir objetivo de evidencia real.</li>
 <li>Indicaciones del auxiliar: 40% funcionamiento/usabilidad y 60% protocolo propio de control/recuperación.
 Niveles y zoom son la base; también se necesita demostrar flujo, ventana y recuperación.</li>
@@ -54,7 +55,8 @@ solo en work. Originales existentes pueden ser de solo lectura.</li>
 <code>./data/originales</code>, <code>./data/work</code>, <code>8081</code>.</li>
 <li>Lanzadores Bash/cmd en <code>scripts/</code>, JAR estable <code>.build/server.jar</code>,
 configuración local opcional y VS Code sin rutas personales.</li>
-<li>26 pruebas pasaron en Fedora al finalizar P0. Los lanzadores Windows necesitan prueba real allí.</li>
+<li>26 pruebas pasaron en Fedora al finalizar P0. El 2026-10-05 se ejecutaron build.cmd y gtp.cmd
+en Windows, incluyendo gtp.cmd desde otra carpeta y ruta de proyecto con espacios.</li>
 </ul>
 <h3>P1 · alcance PNG</h3>
 <ul>
@@ -79,6 +81,21 @@ P2 agrega registros <code>{id}/meta.json</code> con maxZoom y niveles previstos.
 límites y ACK después de decodificación.</li>
 <li>Visor actual: grilla X/Y a resolución nativa. Pan/zoom multinivel normal todavía pendiente.
 La demo sintética no acredita la evaluación con imágenes gigantes.</li>
+</ul>
+
+<h3>P3 · primer incremento funcional</h3>
+<ul>
+<li>Fuente bajo GTP_IMAGES o subida desde navegador en bloques de hasta 1 MiB con offset persistido.
+El original local permanece intacto; source.part es una copia descartable bajo work.</li>
+<li>Decoder PNG secuencial: cinco filtros, CRC/chunks, Deflate/IDAT/IEND y SHA-256.
+Grayscale/indexado 1/2/4/8 bits, RGB/alpha de 8 bits; Adam7/16 bits se rechazan explícitamente.</li>
+<li>Dos filas empaquetadas y una RGBA8 en RAM, banda en disco, tiles nativos y reducción 2×2 desde tiles.
+Publicación atómica de la pirámide completa, progreso, cancelación y reintento desde el principio.</li>
+<li>CLI ingest real y botones P3 del cliente. Solo q3; transporte multinivel y pan/zoom siguen en P5/P6.</li>
+<li>Pruebas nuevas y procedimientos para ambos ambientes en <code>docs/ingesta_p3.md</code>;
+evidencia por plataforma en <code>docs/verificacion.md</code>. Windows: 53 casos Java,
+52 aprobados y 1 POSIX omitido; E2E Edge y smoke de ingesta/reinicio aprobados.
+Falta repetir P3 en Fedora y probar originales del curso.</li>
 </ul>
 
 <h2 id="png">3. Pipeline PNG sin agotar RAM</h2>
@@ -136,17 +153,17 @@ U ≥ 0.35: repetir; U &lt; 0.35: abandonar trabajo que ya no aporta.</code></pr
 con tiempo de cobertura visible y bytes desperdiciados. No afirmar optimalidad ni superioridad sin mediciones.</p>
 
 <h2 id="orden">5. Orden de ejecución</h2>
-<p class="nota"><strong>Siguiente parte: P3.</strong> P0, P1 y la base de registro P2 están implementados y verificados en Fedora.
-P2 registra metadata y seguimiento sin transferir el original; P3 conectará la fuente y hará el procesamiento real.
-El visor completo resulta de conectar esa base con P4, P5 y P6. Las pruebas y documentación
-se actualizan durante cada parte, aunque P7 reúne la evidencia final.</p>
+<p class="nota"><strong>Parte activa: P4, primer incremento implementado.</strong> P0–P3 verificados en Fedora y Windows;
+P3 conecta la fuente y procesa PNG admitidos. P4 añade calidades q0–q3 bajo demanda y caché LRU.
+Faltan datos reales, mediciones y verificación en Fedora. El visor completo resulta de conectar
+esa base con P5 y P6. Las pruebas y documentación se actualizan durante cada parte.</p>
 <table>
 <tr><th>Parte</th><th>Resultado principal</th><th>Estado</th></tr>
-<tr><td><a href="#p0">P0</a></td><td>Rutas y arranque portables</td><td>Implementado; prueba Windows pendiente</td></tr>
+<tr><td><a href="#p0">P0</a></td><td>Rutas y arranque portables</td><td>Implementado; lanzadores probados en Windows; permisos POSIX se verifican en Fedora</td></tr>
 <tr><td><a href="#p1">P1</a></td><td>Elegir e inspeccionar PNG desde cliente y CLI</td><td>Implementado; datasets reales por verificar</td></tr>
-<tr><td><a href="#p2">P2</a></td><td>Registro de imagen, niveles y estado de ingesta</td><td>Base implementada; fuente/decoder pendientes de P3</td></tr>
-<tr><td><a href="#p3">P3</a></td><td>PNG convertido en tiles con memoria acotada</td><td>Pendiente</td></tr>
-<tr><td><a href="#p4">P4</a></td><td>Calidades progresivas y caché del servidor</td><td>Pendiente</td></tr>
+<tr><td><a href="#p2">P2</a></td><td>Registro de imagen, niveles y estado de ingesta</td><td>Base validada en Fedora y Windows</td></tr>
+<tr><td><a href="#p3">P3</a></td><td>PNG convertido en tiles con memoria acotada</td><td>Incremento inicial probado en Windows; cierre con datasets/Fedora pendiente</td></tr>
+<tr><td><a href="#p4">P4</a></td><td>Calidades progresivas y caché del servidor</td><td>Incremento inicial probado en Windows; 71 pruebas totales (0 fallos); Fedora pendiente</td></tr>
 <tr><td><a href="#p5">P5</a></td><td>Protocolo multinivel, flujo y recuperación GTP-RA</td><td>Pendiente</td></tr>
 <tr><td><a href="#p6">P6</a></td><td>Visor normal de pan/zoom sobre tiles</td><td>Pendiente</td></tr>
 <tr><td><a href="#p7">P7</a></td><td>Experimentos y evidencia final</td><td>Pendiente</td></tr>
@@ -162,8 +179,8 @@ y que originales y archivos de trabajo estén separados.</p>
 Git ignorando datos y salidas, VS Code sin rutas de una máquina concreta.</li>
 <li><strong>Pruebas:</strong> rutas con espacios, arranque desde otra carpeta, work sin permisos, originales
 de solo lectura y rechazo de enlaces de tiles que salgan del work.</li>
-<li><strong>Cierre:</strong> arranque reproducible y fallos explícitos. Implementado en Fedora;
-la ejecución real en Windows sigue por comprobar.</li>
+<li><strong>Cierre:</strong> arranque reproducible y fallos explícitos. Lanzadores ejecutados en Fedora (evidencia previa)
+y Windows; la prueba POSIX de permisos se omite justificadamente en Windows.</li>
 </ul>
 
 <h3 id="p1">P1 · Selección e inspección PNG</h3>
@@ -207,6 +224,10 @@ ingesta completa. La ejecución del decoder pertenece a P3 y la migración WebSo
 </ul>
 
 <h3 id="p3">P3 · Preprocesador PNG secuencial y memoria acotada</h3>
+<p class="nota"><strong>Avance:</strong> fuente local/subida, decoder hasta 8 bits no Adam7, pirámide,
+progreso y cancelación implementados. Subida reanudable; procesamiento se reintenta desde el principio.
+PNG sintético completo de 8193 × 4097 procesado con heap de 64 MiB: 783 tiles, 7 niveles.
+Esto no acredita PNG del curso de 17–93 GB ni mide RSS. Comandos y límites en <code>docs/ingesta_p3.md</code>.</p>
 <p><strong>Objetivo:</strong> transformar un original PNG en una pirámide de tiles sin decodificar
 la imagen completa en RAM. Esta parte permite empezar a probar imágenes reales por regiones.</p>
 <ul>
@@ -238,6 +259,26 @@ identidad z/x/y/q y estadísticas de aciertos/evicciones.</li>
 legibilidad final, uso real de memoria, evicción y concurrencia.</li>
 <li><strong>Cierre:</strong> variantes decodificables, límite de caché respetado y refinamiento medible;
 no prometer un peso fijo de archivo ni acumular todas las q en disco.</li>
+</ul>
+
+<h3 id="p4">P4 · Calidades progresivas y caché del servidor</h3>
+<p class="nota"><strong>Avance:</strong> TileQualityService (q0 PNG indexado 64×64, q1/q2 JPEG, q3 identidad),
+TileCacheService LRU con límite de bytes y stats, TileService integrado.
+WebSocket acepta z/q y responde con z/q; catálogo plano y demo compatibles.
+Pruebas nuevas: TileQualityServiceTest (6), TileCacheServiceTest (10),
+P4QualityAndCacheIntegrationTest (2), regresión TileWebSocketHandlerTest (13).
+Total 71 pruebas: 0 fallos, 0 errores, 1 omitida (POSIX).
+Evidencia en <code>docs/calidades_p4.md</code> y <code>docs/verificacion.md</code>.
+Falta repetir en Fedora y validar con originales del curso.</p>
+<ul>
+<li><strong>Trabajo:</strong> calidades bajo demanda, caché RAM LRU, endpoint /api/cache/stats.
+Compatible con P3 ready y catálogo plano.</li>
+<li><strong>Entregables:</strong> q0 indexed PNG, q1/q2 JPEG, q3 PNG nativo; caché 50 MiB default.
+</li>
+<li><strong>Pruebas:</strong> unitarias calidades/caché, integración HTTP+WebSocket, regresión GTP.
+</li>
+<li><strong>Cierre:</strong> calidades generadas y cacheadas, stats expuestas, compatibilidad verificada.
+Falta validar con datasets reales y repetir en Fedora.</li>
 </ul>
 
 <h3 id="p5">P5 · GTP actualizado y recuperación consciente del contenido</h3>
@@ -291,10 +332,16 @@ fixtures sintéticas y datasets reales. Borrar el plan temporal al cerrar la fas
 </ul>
 
 <h2 id="pruebas">6. Pruebas y datos necesarios</h2>
-<p class="nota">P2 verificado: 40 pruebas Java y E2E Chromium. Para probar a mano: seleccionar PNG,
+<p class="nota">P2 verificado previamente en Fedora: 40 pruebas Java y E2E Chromium. Reproducido en Windows:
+39 aprobadas y 1 omitida por permisos POSIX, más E2E Edge. Para probar a mano: seleccionar PNG,
 registrar un identificador, consultar pending, intentar duplicado y reiniciar para comprobar persistencia.
-Mañana retomar P3 con transferencia/lectura acotada del original y decoder PNG secuencial.</p>
-<p class="nota">Actualización 2026-10-05: cliente rediseñado con selector local, informe P1 y preview
+Continuar P3 con originales reales, mediciones y repetición de pruebas en Fedora; conservar el flujo P0/P1/P2 y la demo.</p>
+<p class="nota">Actualización 2026-10-05 (P4): calidades progresivas q0–q3 y caché LRU implementadas.
+71 pruebas totales (0 fallos, 0 errores, 1 omitida POSIX): TileQualityServiceTest (6),
+TileCacheServiceTest (10), P4QualityAndCacheIntegrationTest (2), regresión TileWebSocketHandlerTest (13).
+Evidencia en <code>docs/calidades_p4.md</code> y <code>docs/verificacion.md</code>.
+Falta repetir en Fedora y validar con originales del curso.</p>
+<p class="nota">Actualización 2026-10-05 (P1): cliente rediseñado con selector local, informe P1 y preview
 hasta 4 megapíxeles / 16 MiB. API <code>POST /api/png/inspect</code> comparte validador con CLI y rechaza
 cuerpos mayores de 33 bytes. 35 pruebas Java aprobadas y E2E Chromium aprobado: selección, zoom local,
 descarga, rechazo de preview grande y continuidad del protocolo. No es ingesta ni visualización GTP del original.</p>
@@ -309,7 +356,8 @@ java -Xmx128m -jar .build/server.jar cli ingest "imagen.png" --dry-run --work "w
 <li>Compartir informe de escalera y preflight del PNG pequeño y primero grande, más RAM/disco disponibles.</li>
 <li>Confirmar dimensiones, profundidad y entrelazado reales; no hay razón para usar datos históricos ESO PSB/TIFF.</li>
 <li>Referencia visual <code>image_Indicators.pdf</code>: confirmar lo que muestra para comprobar legibilidad.</li>
-<li>Prueba Windows pendiente; no marcarla completada solo por tener lanzadores cmd.</li>
+<li>Lanzadores Windows ya ejecutados. Cada mejora debe documentarse con instrucciones para ambos ambientes
+y resultados reales por plataforma; Git Bash sobre Windows no equivale a ejecutar Fedora.</li>
 </ul>
 <p>Al cerrar la fase, borrar este archivo temporal. La documentación final debe reflejar únicamente
 lo implementado y verificado, con desviaciones explícitas frente a la especificación.</p>

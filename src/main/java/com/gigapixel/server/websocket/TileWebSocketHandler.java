@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.gigapixel.server.model.ImageMetadata;
 import com.gigapixel.server.model.TileKey;
 import com.gigapixel.server.service.MetadataService;
 import com.gigapixel.server.service.TileService;
@@ -12,7 +13,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -36,7 +36,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
 
-@Component
+/**
+ * Handler GTP/1 legacy — mantenido para pruebas de regresión.
+ * No es un @Component para evitar conflictos con TileWebSocketHandlerV2.
+ */
 public class TileWebSocketHandler extends TextWebSocketHandler {
     static final int MAX_BATCH = 128;
     static final int MAX_WINDOW = 32;
@@ -129,7 +132,7 @@ public class TileWebSocketHandler extends TextWebSocketHandler {
     private void fetch(SessionState state, JsonNode request) throws IOException {
         String requestId = text(request, "request_id");
         String imageId = text(request, "imageId");
-        metadata.getImage(imageId);
+        ImageMetadata image = metadata.getImage(imageId);
         JsonNode array = request.get("tiles");
         if (array == null || !array.isArray() || array.isEmpty() || array.size() > MAX_BATCH) {
             throw new IllegalArgumentException("tiles debe contener de 1 a " + MAX_BATCH + " entradas");
@@ -137,12 +140,24 @@ public class TileWebSocketHandler extends TextWebSocketHandler {
         if (request.has("replace") && !request.get("replace").isBoolean()) {
             throw new IllegalArgumentException("replace debe ser booleano");
         }
+        boolean flat = image.maxZoom() == null;
         var validated = new LinkedHashSet<TileKey>();
         for (JsonNode tile : array) {
-            if (tile.hasNonNull("z")) throw new IllegalArgumentException("Esta versión admite sólo tiles X/Y, z debe ser null");
-            TileKey key = new TileKey(imageId, integer(tile, "x"), integer(tile, "y"));
-            metadata.validateTile(key);
-            validated.add(key);
+            if (flat) {
+                if (tile.hasNonNull("z") || tile.hasNonNull("q")) {
+                    throw new IllegalArgumentException("Catálogo plano: no se admiten z ni q");
+                }
+                TileKey key = new TileKey(imageId, integer(tile, "x"), integer(tile, "y"));
+                metadata.validateTile(key);
+                validated.add(key);
+            } else {
+                int z = tile.hasNonNull("z") ? integer(tile, "z") : 0;
+                int q = tile.hasNonNull("q") ? integer(tile, "q") : 3;
+                if (q < 0 || q > 3) throw new IllegalArgumentException("q debe estar entre 0 y 3");
+                TileKey key = new TileKey(imageId, z, integer(tile, "x"), integer(tile, "y"), q);
+                metadata.validateTile(key);
+                validated.add(key);
+            }
         }
         if (state.requestId != null && !request.path("replace").asBoolean(false)) {
             sendError(state, request, "request_busy", "Hay una solicitud activa; use replace: true para sustituirla");
@@ -281,9 +296,11 @@ public class TileWebSocketHandler extends TextWebSocketHandler {
 
     private void sendTile(SessionState state, String transferId, InFlight flight) throws IOException {
         String format = metadata.getImage(flight.key.imageId()).format();
+        if (flight.key.q() != 3) format = (flight.key.q() == 0 ? "png" : "jpeg");
         ObjectNode message = event("tile_data").put("request_id", state.requestId).put("transfer_id", transferId)
                 .put("tile_id", flight.key.id()).put("imageId", flight.key.imageId())
-                .put("x", flight.key.x()).put("y", flight.key.y()).putNull("z")
+                .put("x", flight.key.x()).put("y", flight.key.y()).put("z", flight.key.z())
+                .put("q", flight.key.q())
                 .put("compression", format).put("size_bytes", flight.data.length).put("attempt", flight.attempts)
                 .put("data", Base64.getEncoder().encodeToString(flight.data));
         flight.sentAt = clock.getAsLong();

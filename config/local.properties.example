@@ -8,3 +8,6 @@
 # images.originals-directory=D:/gpx/originales
 # images.directory=D:/w
 # server.port=8081
+# Ambos ambientes: presupuesto P3 (tambien GTP_INGEST_MEMORY_MIB).
+# Limitado por el heap maximo; no es un limite de RSS de toda la JVM.
+# images.ingest-memory-mib=128

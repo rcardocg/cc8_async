@@ -2,6 +2,12 @@
 
 Ciencias de la Computación VIII. Proyecto Servidor Asíncrono.
 
+> Especificación objetivo. El contrato implementado está en `docs/protocolo.md`.
+> Actualización PNG/portabilidad: originales exclusivamente PNG; raíces separadas
+> `GTP_IMAGES` y `GTP_WORK` en Linux y Windows. P2 registra metadata y espera el
+> original; P3 inicial ya transfiere/procesa PNG no entrelazados hasta 8 bits.
+> Los ejemplos multinivel siguientes siguen siendo objetivo P5, no API vigente.
+
 ## 1. Visión general
 
 El servidor Java sirve imágenes de ultra alta resolución sin enviar nunca la imagen completa. La base del diseño es la misma idea de JPIP (ISO/IEC 15444-9): el cliente pide una región por **posición (x, y)**, **nivel de resolución (z)** y **calidad (q)**, y el servidor responde solo con lo necesario. Sobre esa base se añaden dos mecanismos: **control de transmisión** (ventana, ACK, retransmisión, inspirado en TCP) y **gestión de memoria** (cliente y servidor).
@@ -17,9 +23,9 @@ Todos los recursos se sirven desde el propio servidor Java. No hay solicitudes e
 
 ## 2. Modelo de datos: pirámide de tiles
 
-Cada imagen se preprocesa una sola vez en una pirámide de niveles. Un nivel z tiene la imagen reducida a la mitad respecto al nivel z+1. El nivel 0 cabe en un solo tile y el nivel máximo (maxZoom) es la resolución original. Cada nivel se divide en tiles de 256 × 256 px.
+Cada imagen se preprocesa una sola vez en una pirámide de niveles. Un nivel z tiene la imagen reducida a la mitad respecto al nivel z+1. El nivel 0 cabe en un solo tile y el nivel máximo (maxZoom) es la resolución original. Cada nivel se divide según el `tileSize` de metadata (256 por defecto; el selector también permite 512).
 
-Un tile se identifica por **(imageId, z, x, y, q)**. En z, el número de columnas es ceil(ancho_z / 256) y el de filas ceil(alto_z / 256).
+Un tile se identifica por **(imageId, z, x, y, q)**. En z, el número de columnas es ceil(ancho_z / tileSize) y el de filas ceil(alto_z / tileSize).
 
 ### 2.1. Niveles de calidad
 
@@ -42,8 +48,12 @@ La pirámide mantiene la forma general de la imagen al alejar (zoom out) porque 
 | GET /viewer.js, /viewer.css | Recursos estáticos locales |
 | GET /api/images | Arreglo JSON con los identificadores de imágenes disponibles |
 | GET /api/image/{id}/metadata | imageId, width, height, tileSize, totalTiles, maxZoom, format, niveles (columnas y filas por nivel) |
-| POST /api/images | Alta de una nueva imagen (inicia el preprocesamiento en segundo plano) |
+| POST /api/images | Registro de cabecera/metadata (202, pending/awaiting_transfer; no inicia el decoder) |
+| GET/PUT/DELETE /api/image/{id}/upload | Transferencia por bloques, consulta de offset y reinicio de la copia |
+| POST /api/image/{id}/ingest | Inicia el preprocesamiento de una fuente disponible (202) |
 | GET /api/image/{id}/status | Estado del preprocesamiento (pending, processing, ready, failed) |
+| GET /api/cache/stats | Estadísticas de caché de tiles (entries, usedBytes, maxBytes, hits, misses, evictions) |
+| GET /api/cache/clear | Vacía la caché de tiles del servidor |
 
 Semántica de métodos y códigos de estado según RFC 9110 (que reemplaza a RFC 7230 a 7235). Los tiles **no** se piden por HTTP: viajan por WebSocket.
 
@@ -188,18 +198,19 @@ Los algoritmos se justifican con Belady (1966) para el reemplazo de páginas y D
 No se utiliza base de datos. La estructura es un directorio por imagen:
 
 ```text
-data/images/{imageId}/
-  meta.json              dimensiones, tileSize, maxZoom, formato, estado
-  original.tif           archivo original (solo para el preprocesamiento)
-  tiles/{z}/{x}_{y}.png  tiles de calidad completa
-  tiles/{z}/{x}_{y}.jpg  variante de calidad media (opcional)
+<GTP_IMAGES>/imagen.png             original local del servidor, sin modificar
+<GTP_WORK>/{imageId}/
+  meta.json                        dimensiones, tileSize, maxZoom, formato, estado
+  source.part                      copia de subida, si el original viene del navegador
+  tiles/{z}/{x}_{y}.png             tiles de calidad completa
+  tiles/{z}/{x}_{y}.jpg             variante de calidad media (objetivo P4)
 ```
 
 Las variantes de menor calidad (q = 0 y 1) pueden generarse bajo demanda a partir del tile completo y guardarse en la caché del servidor. El catálogo (`/api/images`) se construye leyendo los `meta.json` al iniciar y al detectar nuevas imágenes.
 
 ## 11. Seguridad y límites
 
-- Se validan z, x, y, q y se rechaza todo identificador de imagen con caracteres de ruta (por ejemplo `..`) para evitar acceso a archivos fuera de `data/images`.
+- Se validan z, x, y, q y se rechaza todo identificador de imagen con caracteres de ruta (por ejemplo `..`) para evitar acceso fuera de `GTP_WORK`; las fuentes del servidor se confinan a `GTP_IMAGES`.
 - Se limita el tamaño máximo de un mensaje WebSocket y el número de tiles por `fetch_tiles`.
 - Se limita el número de solicitudes por segundo por conexión.
 

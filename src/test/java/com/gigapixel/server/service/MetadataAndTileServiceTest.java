@@ -20,12 +20,16 @@ class MetadataAndTileServiceTest {
     @TempDir Path originals;
     private final ObjectMapper mapper = new ObjectMapper();
 
+    private TileService createTileService(MetadataService metadata) {
+        return new TileService(metadata, new TileQualityService(), new TileCacheService(1024 * 1024));
+    }
+
     @Test
     void demoMetadataAndRealPngAgree() throws Exception {
         MetadataService metadata = metadata(true);
         var image = metadata.getImage(MetadataService.DEMO_ID);
         assertEquals(256L, image.totalTiles());
-        byte[] bytes = new TileService(metadata).readTile(new TileKey(image.imageId(), 15, 15));
+        byte[] bytes = createTileService(metadata).readTile(new TileKey(image.imageId(), 15, 15));
         BufferedImage decoded = ImageIO.read(new ByteArrayInputStream(bytes));
         assertNotNull(decoded);
         assertEquals(256, decoded.getWidth());
@@ -48,7 +52,7 @@ class MetadataAndTileServiceTest {
         ImageIO.write(new BufferedImage(44, 24, BufferedImage.TYPE_INT_RGB), "png", folder.resolve("1_1.png").toFile());
         MetadataService metadata = metadata(false);
         assertEquals(java.util.List.of("real"), metadata.listImages());
-        TileService tiles = new TileService(metadata);
+        TileService tiles = createTileService(metadata);
         var decoded = ImageIO.read(new ByteArrayInputStream(tiles.readTile(new TileKey("real", 1, 1))));
         assertEquals(44, decoded.getWidth());
         assertEquals(24, decoded.getHeight());
@@ -75,7 +79,7 @@ class MetadataAndTileServiceTest {
         writeCatalog("real", 256, 256, 1);
         Path folder = Files.createDirectory(directory.resolve("real"));
         Path tile = folder.resolve("0_0.png");
-        TileService tiles = new TileService(metadata(false));
+        TileService tiles = createTileService(metadata(false));
         Files.write(tile, new byte[TileService.MAX_TILE_BYTES + 1]);
         assertThrows(IOException.class, () -> tiles.readTile(new TileKey("real", 0, 0)));
         ImageIO.write(new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB), "png", tile.toFile());
@@ -97,7 +101,7 @@ class MetadataAndTileServiceTest {
         } catch (UnsupportedOperationException | IOException e) {
             org.junit.jupiter.api.Assumptions.assumeTrue(false, "El sistema no permite crear enlaces: " + e);
         }
-        TileService tiles = new TileService(metadata(false));
+        TileService tiles = createTileService(metadata(false));
         assertThrows(IOException.class, () -> tiles.readTile(new TileKey("real", 0, 0)));
     }
 

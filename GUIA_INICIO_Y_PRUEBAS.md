@@ -1,9 +1,16 @@
 # Guía de inicio y comprobación del servidor
 
-**Fecha:** 2026-10-02  
+**Actualización:** 2026-10-05
 **Objetivo actual:** levantar el sistema y observar que Java recibe solicitudes,
-envía tiles y procesa confirmaciones del navegador. Los siguientes hitos del
-proyecto quedan en pausa mientras se revisa este funcionamiento.
+envía tiles y procesa confirmaciones del navegador, preservando esa base mientras
+avanzan P2/P3. La ingesta secuencial inicial ya está disponible.
+
+**Ambos ambientes:** rutas/lanzadores en [docs/imagenes.md](docs/imagenes.md),
+registro en [docs/registro_p2.md](docs/registro_p2.md) e ingesta real con comandos
+equivalentes para Fedora y Windows en [docs/ingesta_p3.md](docs/ingesta_p3.md).
+En Fedora: `bash scripts/build.sh` y `bash scripts/gtp.sh`.
+En Windows: `.\scripts\build.cmd` y `.\scripts\gtp.cmd`.
+Los ejemplos de diagnóstico PowerShell de esta guía siguen siendo válidos.
 
 Este archivo está en la raíz del proyecto, al mismo nivel que `bitacora_fase1.md`.
 

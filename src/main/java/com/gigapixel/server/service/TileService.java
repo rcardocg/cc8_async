@@ -24,16 +24,37 @@ public class TileService {
     public static final int MAX_TILE_BYTES = 512 * 1024;
     private final MetadataService metadata;
     private final Path root;
+    private final TileQualityService qualityService;
+    private final TileCacheService cacheService;
 
-    public TileService(MetadataService metadata) {
+    public TileService(MetadataService metadata, TileQualityService qualityService, TileCacheService cacheService) {
         this.metadata = metadata;
         this.root = metadata.directory();
+        this.qualityService = qualityService;
+        this.cacheService = cacheService;
     }
 
     public byte[] readTile(TileKey key) throws IOException {
         ImageMetadata image = metadata.validateTile(key);
         if (MetadataService.DEMO_ID.equals(key.imageId())) return demoTile(key, image);
 
+        int q = key.q();
+        String cacheKey = key.id();
+
+        byte[] cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
+        byte[] result;
+        if (image.maxZoom() == null) {
+            result = readFlatTile(key, image);
+        } else {
+            result = readMultilevelTile(key, image);
+        }
+        cacheService.put(cacheKey, result);
+        return result;
+    }
+
+    private byte[] readFlatTile(TileKey key, ImageMetadata image) throws IOException {
         Path candidate = root.resolve(key.imageId()).resolve(key.x() + "_" + key.y() + "." + image.format()).normalize();
         if (!candidate.startsWith(root)) throw new IOException("Tile fuera del directorio de imágenes");
         Path file = candidate.toRealPath();
@@ -45,6 +66,39 @@ public class TileService {
         if (bytes.length == 0 || bytes.length > MAX_TILE_BYTES) throw new IOException("Tamaño de tile inválido");
         validateHeader(bytes, key, image);
         return bytes;
+    }
+
+    private byte[] readMultilevelTile(TileKey key, ImageMetadata image) throws IOException {
+        int z = key.z();
+        int q = key.q();
+        String format = (q == 3) ? "png" : (q == 0 ? "png" : "jpeg");
+
+        Path candidate = root.resolve(key.imageId()).resolve("tiles").resolve(Integer.toString(z))
+                .resolve(key.x() + "_" + key.y() + "." + format).normalize();
+        if (!candidate.startsWith(root)) throw new IOException("Tile fuera del directorio de imágenes");
+
+        byte[] nativeTile;
+        if (Files.exists(candidate)) {
+            try (var stream = Files.newInputStream(candidate)) {
+                nativeTile = stream.readNBytes(MAX_TILE_BYTES + 1);
+            }
+            if (nativeTile.length == 0 || nativeTile.length > MAX_TILE_BYTES) throw new IOException("Tamaño de tile inválido");
+        } else {
+            Path nativePng = root.resolve(key.imageId()).resolve("tiles").resolve(Integer.toString(z))
+                    .resolve(key.x() + "_" + key.y() + ".png").normalize();
+            if (!Files.exists(nativePng)) throw new IOException("Tile no encontrado: " + candidate);
+            try (var stream = Files.newInputStream(nativePng)) {
+                nativeTile = stream.readNBytes(MAX_TILE_BYTES + 1);
+            }
+        }
+
+        return switch (q) {
+            case 0 -> qualityService.generateQuality0(nativeTile);
+            case 1 -> qualityService.generateQuality1(nativeTile);
+            case 2 -> qualityService.generateQuality2(nativeTile);
+            case 3 -> nativeTile;
+            default -> throw new IOException("Calidad no soportada: " + q);
+        };
     }
 
     private void validateHeader(byte[] bytes, TileKey key, ImageMetadata image) throws IOException {

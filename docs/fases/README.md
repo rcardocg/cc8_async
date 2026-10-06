@@ -1,6 +1,6 @@
 # Bitácoras de implementación y resolución
 
-Revisión: **2026-10-02**. Se conserva la numeración de cinco fases de comunicación
+Revisión: **2026-10-05**. Se conserva la numeración de cinco fases de comunicación
 de la propuesta; fase 00 registra la preparación transversal. Cada archivo indica
 problema, resolución, evidencia y pendientes. «Base implementada» no significa que
 la evaluación final con imágenes gigantes esté completada.
@@ -11,7 +11,7 @@ la evaluación final con imágenes gigantes esté completada.
 | 01 | [Bootstrap HTTP y metadata](fase_01_bootstrap.md) | Catálogo y validación implementados |
 | 02 | [WebSocket y recuperación](fase_02_websocket.md) | Protocolo por sesión implementado |
 | 03 | [Región visible y cliente](fase_03_viewport.md) | Navegación X/Y y cancelación; predicción pendiente |
-| 04 | [Transferencia de tiles](fase_04_tiles.md) | PNG/JPEG reales; importación gigante y niveles pendientes |
+| 04 | [Transferencia de tiles](fase_04_tiles.md) | Transporte plano y P3 inicial de pirámides PNG; datasets/transporte multinivel pendientes |
 | 05 | [Recursos y monitoreo](fase_05_recursos.md) | Límites/telemetría básicos; caché y adaptación pendientes |
 
 La bitácora antigua mezclaba las fases 1 y 2 en `bitacora_fase1.md` y llamaba a la

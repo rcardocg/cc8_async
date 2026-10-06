@@ -16,9 +16,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Registro P2. Guarda cabecera/metadata, nunca el contenido del PNG. */
+/** Registro P2/P3. Guarda cabecera/metadata, nunca el contenido del PNG en JSON. */
 public final class ImageRegistry {
-    public record Source(String kind, String name, long declaredSizeBytes, String headerBase64) { }
+    public record Source(String kind, String name, long declaredSizeBytes, String headerBase64, String sha256) {
+        public Source(String kind, String name, long declaredSizeBytes, String headerBase64) {
+            this(kind, name, declaredSizeBytes, headerBase64, null);
+        }
+    }
     public record Registration(int schemaVersion, ImageMetadata metadata, Source source,
                                long processedTiles, Integer currentLevel, String message, String error) { }
     private static final String WAITING = "Registro pendiente: falta transferir el original y ejecutar el preprocesador de P3";
@@ -56,6 +60,8 @@ public final class ImageRegistry {
         return value == null ? null : value.metadata();
     }
 
+    public synchronized Registration registration(String id) { return registrations.get(id); }
+
     public synchronized ImageMetadata register(String id, PngInspector.Inspection image, byte[] header) throws IOException {
         if (registrations.containsKey(id)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Identificador ya registrado");
         Path folder = layout.imageRoot(id);
@@ -79,7 +85,36 @@ public final class ImageRegistry {
         Registration value = registrations.get(id);
         if (value == null) return null;
         return new ImageStatus(id, value.metadata().state(), value.processedTiles(), value.metadata().totalTiles(),
-                value.currentLevel(), value.metadata().completedLevels(), "awaiting_transfer", value.message(), value.error());
+                value.currentLevel(), value.metadata().completedLevels(),
+                "ready".equals(value.metadata().state()) ? "verified" : "browser_header".equals(value.source().kind())
+                        ? "awaiting_transfer" : "processing".equals(value.metadata().state()) ? "decoding" : "retry_required",
+                value.message(), value.error());
+    }
+
+    public synchronized void processing(String id, String sourceKind, long count, Integer level) throws IOException {
+        Registration old = registrations.get(id);
+        Source source = new Source(sourceKind, old.source().name(), old.source().declaredSizeBytes(), old.source().headerBase64());
+        update(new Registration(2, withState(old.metadata(), "processing", false), source, count, level,
+                "Procesamiento PNG secuencial; niveles aún no publicados", null));
+    }
+
+    public synchronized void ready(String id, String sha256) throws IOException {
+        Registration old = registrations.get(id);
+        Source source = new Source(old.source().kind(), old.source().name(), old.source().declaredSizeBytes(), old.source().headerBase64(), sha256);
+        update(new Registration(2, withState(old.metadata(), "ready", true), source, old.metadata().totalTiles(), null,
+                "Pirámide PNG completa; CRC/IDAT/IEND y SHA-256 verificados. Transporte multinivel pendiente de P5", null));
+    }
+
+    private static ImageMetadata withState(ImageMetadata old, String state, boolean ready) {
+        return new ImageMetadata(old.imageId(), old.width(), old.height(), old.tileSize(), old.totalTiles(), old.maxZoom(),
+                old.format(), state, old.levels(), ready ? old.levels().stream().map(level -> level.z()).toList() : List.of(),
+                ready ? List.of(3) : List.of());
+    }
+
+    private void update(Registration value) throws IOException {
+        validate(value, value.metadata().imageId());
+        write(layout.imageRoot(value.metadata().imageId()), value, true);
+        registrations.put(value.metadata().imageId(), value);
     }
 
     // P3 podrá registrar un fallo real sin perder la cabecera ni sobrescribir el original.
@@ -90,7 +125,7 @@ public final class ImageRegistry {
         var old = value.metadata();
         var failed = new ImageMetadata(id, old.width(), old.height(), old.tileSize(), old.totalTiles(), old.maxZoom(),
                 old.format(), "failed", old.levels(), old.completedLevels(), old.availableQualities());
-        Registration replacement = new Registration(1, failed, value.source(), 0, null, "Registro fallido", error);
+        Registration replacement = new Registration(value.schemaVersion(), failed, value.source(), 0, null, "Registro fallido; puede reintentarse desde el inicio", error);
         write(layout.imageRoot(id), replacement, true);
         registrations.put(id, replacement);
     }
@@ -103,6 +138,7 @@ public final class ImageRegistry {
 
     private void validate(Registration value, String folderId) throws IOException {
         try {
+            if (value != null && value.schemaVersion() == 2) { validateP3(value, folderId); return; }
             if (value == null || value.schemaVersion() != 1 || value.metadata() == null || value.source() == null
                     || !folderId.matches("[a-zA-Z0-9_-]{1,64}") || MetadataService.DEMO_ID.equals(folderId)
                     || !folderId.equals(value.metadata().imageId()) || !"browser_header".equals(value.source().kind())
@@ -120,6 +156,34 @@ public final class ImageRegistry {
             }
         } catch (IllegalArgumentException | NullPointerException e) {
             throw new IOException("Registro P2 inválido: " + folderId, e);
+        }
+    }
+
+    private void validateP3(Registration value, String id) throws IOException {
+        if (value.metadata() == null || value.source() == null || !id.matches("[a-zA-Z0-9_-]{1,64}")
+                || MetadataService.DEMO_ID.equals(id) || !id.equals(value.metadata().imageId())
+                || !List.of("server_file", "browser_upload").contains(value.source().kind())
+                || value.source().name() == null || value.source().name().isBlank() || value.source().name().length() > 255
+                || !List.of("processing", "ready", "failed").contains(value.metadata().state()) || value.message() == null) {
+            throw new IOException("Registro P3 inválido");
+        }
+        var image = PngInspector.inspectHeader(Base64.getDecoder().decode(value.source().headerBase64()),
+                value.source().name(), value.source().declaredSizeBytes(), value.metadata().tileSize());
+        boolean ready = "ready".equals(value.metadata().state());
+        if (!withState(planned(id, image, value.metadata().state()), value.metadata().state(), ready).equals(value.metadata())
+                || value.processedTiles() < 0 || value.processedTiles() > image.pyramid().totalTiles()
+                || value.currentLevel() != null && (value.currentLevel() < 0 || value.currentLevel() > image.pyramid().maxZoom())
+                || "failed".equals(value.metadata().state()) != (value.error() != null && !value.error().isBlank())) {
+            throw new IOException("Metadata/progreso P3 inconsistente");
+        }
+        if (ready) {
+            Path receipt = layout.imageRoot(id).resolve("tiles/complete.sha256");
+            ensureInside(receipt);
+            if (value.processedTiles() != image.pyramid().totalTiles() || value.currentLevel() != null
+                    || value.source().sha256() == null || !value.source().sha256().matches("[a-f0-9]{64}")
+                    || Files.size(receipt) != 64 || !Files.readString(receipt).equals(value.source().sha256())) {
+                throw new IOException("Falta comprobante de pirámide completa");
+            }
         }
     }
 

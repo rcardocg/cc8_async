@@ -8,15 +8,16 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 @Configuration
 @EnableWebSocket
 public class WebSocketConfig implements WebSocketConfigurer {
-    private final TileWebSocketHandler handler;
+    private final TileWebSocketHandlerV2 handler;
 
-    public WebSocketConfig(TileWebSocketHandler handler) {
+    public WebSocketConfig(TileWebSocketHandlerV2 handler) {
         this.handler = handler;
     }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         // El cliente y sus recursos se sirven desde este mismo servidor Java.
+        // GTP/2 soporta GTP/1 legacy para demo y catálogo plano.
         registry.addHandler(handler, "/ws/tiles");
     }
 }

@@ -24,3 +24,30 @@ por red y renderizado en navegador. Véase [verificacion.md](../verificacion.md)
 preprocesados según [imagenes.md](../imagenes.md). Importar las imágenes originales
 de 24/17/28/55/93 GB, generar pirámides, prioridades y compresión adaptativa sigue
 pendiente. La demo no debe presentarse como evidencia de estas capacidades.
+
+## 2026-10-05 · P3 inicial: fuente y pirámide PNG real
+
+**Objetivo:** conectar los registros P2 con bytes del original y generar tiles/niveles
+con memoria acotada, manteniendo el transporte plano operativo.
+
+**Fallo observado:** P2 solo conservaba cabecera; Java no podía abrir una ruta del
+selector. No existía decoder de IDAT ni publicación de salida preparada.
+
+**Cambio:** subida persistente de hasta 1 MiB/bloque, fuente confinada a GTP_IMAGES,
+CLI real y trabajo asíncrono HTTP. Decoder secuencial con CRC, cinco filtros, Deflate,
+IEND y SHA-256; fila RGBA8 y banda en disco; reducción 2×2 desde tiles con alpha
+premultiplicado. Manifiesto P3 v2 y publicación atómica de pirámide completa; estados,
+cancelación, reinicio fallido y reintento. Exclusión con semáforo local y lock de archivo,
+evitando abrir/cerrar descriptores rivales de un lock propio en POSIX. Sin dependencias nuevas.
+
+**Verificación Windows:** suites nuevas de decoder/servicio/HTTP; regresiones P0/P1/P2
+y GTP incluidas en 53 casos (52 aprobados/1 POSIX omitido). E2E Edge completó P3 y
+continuó la demo con recuperación y dos clientes. Smoke JAR real `-Xmx64m` procesó
+PNG sintético 8193×4097, 783 tiles/7 niveles y SHA correcto; reinicio real de Java
+preservó pending, ready y offset de subida. Ver [verificacion.md](../verificacion.md).
+
+**Límites y continuidad en ambos ambientes:** [ingesta_p3.md](../ingesta_p3.md) incluye
+los comandos Fedora/Windows. P3 nuevo pendiente de ejecución en Fedora, datasets del
+curso, RSS/disco y fidelidad visual. Rechazo explícito de Adam7/16 bits. La subida se
+reanuda por offset; el decoder se reintenta desde cero. P4/P5/P6 siguen pendientes;
+generar una pirámide no habilita aún su navegación GTP multinivel.

@@ -19,13 +19,20 @@ Los originales de evaluación son **PNG**. P1 permite elegirlos desde el explora
 del cliente, sin escribir rutas ni moverlos al proyecto, e inspeccionar su cabecera
 para estimar tiles, RAM y disco. Solo se envían 33 bytes; los pequeños tienen vista
 previa local con zoom. También existe CLI sin arrancar el servidor.
-El preprocesador PNG secuencial y el visor con pan/zoom multinivel siguen pendientes.
+P3 incorpora un primer preprocesador PNG secuencial; el visor con pan/zoom multinivel
+sigue pendiente de P5/P6.
 Pruebas del CLI: [docs/pruebas_png_p1.md](docs/pruebas_png_p1.md).
 
 P2 añade **Registrar imagen** desde el cliente, persistencia en `meta.json`,
 metadata multinivel prevista y consulta de estado. Los registros pendientes
 aparecen en catálogo, pero no se cargan como tiles. Pruebas y contrato:
 [docs/registro_p2.md](docs/registro_p2.md).
+
+P3 añade **Transferir / reanudar y procesar**, subida en bloques de 1 MiB, ingesta
+desde originales del servidor/CLI y pirámides reales con memoria acotada. Soporta
+PNG no entrelazados de hasta 8 bits; 16 bits y Adam7 se rechazan explícitamente.
+Los registros pasan a `ready` solo después de validar y generar la pirámide completa.
+Guías para **Linux y Windows**, API y límites: [docs/ingesta_p3.md](docs/ingesta_p3.md).
 
 ## Ejecutar
 
@@ -35,9 +42,8 @@ Para iniciar paso a paso y observar solicitudes en vivo, consulta
 Requisitos de desarrollo: **JDK 21 y Maven 3.9+** disponibles en `PATH`.
 
 ```powershell
-mvn test
-mvn package
-java -jar target/server.jar
+.\scripts\build.cmd
+.\scripts\gtp.cmd
 ```
 
 Abrir **http://localhost:8081/**. Todos los recursos del cliente se sirven desde
@@ -48,7 +54,7 @@ primera compilación necesita las dependencias Maven descargadas.
 Opciones de arranque:
 
 ```powershell
-java -jar target/server.jar --server.port=8082 --images.originals-directory="D:/imagenes/originales" --images.directory="D:/imagenes/tiles" --images.demo-enabled=false
+java -jar .build/server.jar --server.port=8082 --images.originals-directory="D:/imagenes/originales" --images.directory="D:/imagenes/tiles" --images.demo-enabled=false
 ```
 
 Para generar artefactos en una carpeta alternativa:
@@ -66,8 +72,8 @@ Consulta [docs/imagenes.md](docs/imagenes.md) para las rutas y configuración lo
 ## Probar desde el navegador
 
 Para pruebas P1, usar **Elegir PNG** en la sección superior, revisar las estimaciones
-y descargar el informe JSON. La vista previa de archivos pequeños es local;
-los originales grandes requieren el preprocesador pendiente antes de visualizarlos.
+y descargar el informe JSON. La vista previa de archivos pequeños es local.
+El botón P3 genera tiles; su visualización multinivel aún requiere P5/P6.
 Para probar la transferencia GTP, usar la sección **Visor de tiles preparados**:
 
 1. Seleccionar una imagen y una región, o usar las flechas de navegación.
@@ -92,6 +98,9 @@ node scripts/verify-browser.cjs .build/server.jar
 
 El script arranca su propio servidor en un puerto libre y lo detiene al terminar.
 `BROWSER_CHANNEL=chrome` permite usar Chrome en lugar de Edge.
+En Fedora, `BROWSER_EXECUTABLE_PATH` permite indicar Chromium instalado.
+Smoke P3 sin Playwright: `node scripts/verify-ingestion.cjs .build/server.jar`
+(PNG sintético íntegro, heap de 64 MiB, reinicio real de Java).
 
 ## Agregar imágenes preprocesadas
 
@@ -117,7 +126,7 @@ las imágenes indicadas de 17, 28, 55 y 93 GB tienen máximos de 20, 40, 80 y 11
 
 Pendiente para la solución completa:
 
-- Preprocesamiento de imágenes originales gigantes con I/O y memoria acotados.
+- Validar el preprocesador con originales gigantes del curso y ampliar variantes PNG según su inventario.
 - Niveles de resolución y selección de calidad por cliente; el protocolo actual
   rechaza `z` distinto de `null` para no aparentar soporte inexistente.
 - Predicción/prefetch, caché LRU/LFU y compresión adaptativa medidos y justificados.

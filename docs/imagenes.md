@@ -9,6 +9,7 @@ Se usan dos carpetas separadas, fuera del repositorio para archivos grandes:
 | `GTP_IMAGES` | `images.originals-directory` | `./data/originales` | Originales; no se modifican ni se sirve su contenido completo |
 | `GTP_WORK` | `images.directory` | `./data/work` | Catálogo y tiles preparados; debe permitir escritura |
 | `GTP_PORT` | `server.port` | `8081` | Puerto HTTP/WebSocket |
+| `GTP_INGEST_MEMORY_MIB` | `images.ingest-memory-mib` | `128` | Presupuesto de buffers/margen para P3 HTTP; limitado también por heap máximo |
 
 Al arrancar, `ImagesLayout` crea las carpetas que falten y resuelve sus rutas
 canónicas una vez. Comprueba lectura en ambas y escritura efectiva en el work
@@ -73,11 +74,11 @@ local, `/data/`, `/work/` y `/.build/` están ignorados por Git.
   de tiles. FAT32 no admite originales de más de 4 GiB.
 - Probar un dataset por vez. Borrar sus tiles solo después de terminar la prueba;
   conservar siempre los originales. El borrado del work es manual en P0.
-- `ImagesLayout.freeBytes()` expone el espacio utilizable. La estimación y el bloqueo
-  por espacio insuficiente antes de ingerir pertenecen al siguiente hito.
+- `ImagesLayout.freeBytes()` expone el espacio utilizable. P3 comprueba estimación,
+  banda temporal y margen de disco antes y durante el procesamiento.
 - Si ya existe un catálogo en `data/images`, configurar `GTP_WORK` con esa ruta o
   mover manualmente catálogo y tiles a la nueva carpeta. No hay migración automática.
-- P1 añade CLI de inspección PNG y preflight. La generación de tiles sigue pendiente.
+- P1 añade inspección/preflight; P3 incorpora generación real para PNG no Adam7 de hasta 8 bits.
 
 ## P1 · Selección desde el cliente e inspección PNG
 
@@ -87,8 +88,8 @@ es navegar normalmente con pan y zoom y refinar las regiones visibles. Para
 lograrlo con originales gigantes, primero se generarán tiles y niveles con
 memoria acotada. La navegación multinivel aún no está implementada en el visor.
 
-El CLI se despacha antes de Spring: no arranca servidor, no crea directorios y
-no escribe tiles. Lee firma e IHDR (33 bytes), verifica CRC de IHDR, dimensiones,
+El CLI se despacha antes de Spring. `inspect`, `ladder` e `ingest --dry-run` no crean
+directorios ni tiles. La inspección lee firma e IHDR (33 bytes), verifica CRC de IHDR, dimensiones,
 profundidad/color y método de entrelazado. Detecta PNG por firma aunque la extensión
 sea distinta. **No verifica IDAT/IEND ni demuestra que todo el PNG sea decodificable.**
 
@@ -148,7 +149,8 @@ lanzador se pasan al programa, no a la JVM.
   defecto) y `--work RUTA` (por defecto `GTP_WORK` o `./data/work`).
 - El CLI no carga `config/local.properties`; para preflight usar `GTP_WORK` o
   `--work`. El servidor sí admite la configuración Spring documentada arriba.
-- `ingest` sin `--dry-run` devuelve error: no existe todavía el preprocesador.
+- `ingest` sin `--dry-run` ejecuta P3; requiere `--image-id`, fuente y work separados.
+  Procedimientos equivalentes en Linux/Windows: [ingesta_p3.md](ingesta_p3.md).
 
 ### Interpretar el preflight
 
@@ -156,8 +158,9 @@ lanzador se pasan al programa, no a la JVM.
 |---|---:|---|
 | `preflight_ok` | 0 | Cabecera y estimaciones pasan; no prueba ingesta ni lectura completa |
 | `insufficient_disk` | 2 | Espacio libre menor que la estimación |
-| `memory_review` | 1 | Dos filas + margen de 32 MiB exceden el presupuesto indicado |
+| `memory_review` | 1 | Dos filas empaquetadas + fila RGBA8 + margen de 32 MiB exceden el presupuesto efectivo |
 | `interlace_review` | 1 | Adam7 detectado; hace falta pipeline adicional de pasadas |
+| `depth_review` | 1 | 16 bits detectados; no se reduce precisión silenciosamente |
 | `work_not_writable` | 1 | Work o ancestro no escribible |
 | `error` | 1 | Archivo, cabecera u opciones inválidos |
 
@@ -168,16 +171,14 @@ No es una reserva ni garantía de ocupación: compresión, precisión de 16 bits
 overhead del sistema de archivos se medirán al implementar la ingesta. Dos filas
 son un **mínimo**, no el consumo máximo del decoder, la JVM o una banda de tiles.
 
-### Pipeline PNG pendiente
+### Pipeline PNG P3 inicial
 
 PNG no permite saltar a un tile arbitrario dentro del flujo Deflate. El pipeline
-debe recorrer IDAT secuencialmente, invertir filtros con filas anterior/actual y
-generar tiles sin retener la imagen completa. **No usar `ImageIO.read(original)`**
-ni acumular `ancho × alto` píxeles. Tampoco asumir que una banda de 256 filas cabe:
-para anchos extremos habrá que volcar fragmentos al work con buffers limitados.
-Los niveles reducidos se construirán desde tiles ya escritos; los originales no
-se modificarán. Adam7, paletas, transparencia y 16 bits requieren caminos
-verificados; la inspección actual solo identifica esas variantes.
+recorre IDAT secuencialmente, invierte filtros con filas anterior/actual y genera
+tiles sin retener la imagen completa. **No usa `ImageIO.read(original)`** ni acumula
+`ancho × alto` píxeles. La banda se vuelca a disco; los niveles reducidos se generan
+desde tiles acotados. Soporta grayscale, paletas, RGB y alpha hasta 8 bits;
+Adam7 y 16 bits siguen pendientes. Ver [ingesta_p3.md](ingesta_p3.md).
 
 Pruebas recomendadas: [pruebas_png_p1.md](pruebas_png_p1.md).
 
@@ -223,7 +224,7 @@ bordes. Para JPEG se usa `format: "jpeg"` y extensión `.jpeg`.
 - Dimensiones positivas representables como `int`; tamaño de tile de 64–512 px.
 - `totalTiles = ceil(width/tileSize) * ceil(height/tileSize)`, calculado con `long`.
 - En el catálogo plano `maxZoom` debe ser `null`. Los registros P2 en `meta.json`
-  tienen niveles previstos, pero todavía no tiles multinivel generados.
+  tienen niveles previstos. P3 publica los niveles completos después de generarlos y validarlos.
 - PNG/JPEG; máximo 512 KiB comprimidos por tile; catálogo máximo 1 MiB.
 - Cabecera de imagen, formato y dimensiones verificadas antes de transferir.
 - Rutas normalizadas y resueltas para impedir salir del directorio mediante enlaces.
@@ -236,10 +237,10 @@ desde los enlaces externos incluidos en los PDFs durante la ejecución.
 
 ## Alcance y siguiente paso
 
-Este formato permite probar transferencia real sin cargar un original gigante en
-RAM, pero **requiere tiles preparados previamente**. No hay todavía preprocesador
-PNG gigante. Implementar y verificar ese pipeline
-es un trabajo pendiente: no debe sustituirse por `ImageIO.read(originalGigante)`.
+El formato plano permite probar transferencia real sin cargar un original gigante
+en RAM y **requiere tiles preparados previamente**. P3 genera una pirámide en su
+propia estructura `tiles/{z}/{x}_{y}.png`; integrarla al transporte/visor corresponde
+a P5/P6. Falta validar el decoder inicial con los PNG gigantes reales del curso.
 La validación de cabecera de un tile acota dimensiones; no prueba por sí sola que
 todo el archivo sea decodificable. El cliente confirma sólo después de decodificar.
 

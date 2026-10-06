@@ -30,6 +30,15 @@ y `Location` del estado. Duplicados/reservados: 409; parámetros/cabecera invál
 `GET /api/image/{id}/status` devuelve progreso y `sourceState`. Un registro pendiente
 no puede solicitar tiles. Contrato y pruebas en [registro_p2.md](registro_p2.md).
 
+P3 añade transferencia del original **hacia Java**, distinta de la entrega de tiles
+al visor: `GET/PUT/DELETE /api/image/{id}/upload`, bloques de hasta 1 MiB y offset
+persistido; `POST /api/image/{id}/ingest` (202) y `/ingest/cancel`. La fuente puede
+ser la copia subida o un nombre relativo a `GTP_IMAGES`. Procesa PNG no Adam7 de
+hasta 8 bits, genera pirámides en disco y publica `ready` tras éxito completo.
+Contrato, errores y reintentos: [ingesta_p3.md](ingesta_p3.md).
+La disponibilidad de tiles multinivel en disco no cambia todavía el contrato
+WebSocket plano: su transporte se implementará en P5.
+
 Mensajes JSON en frames de texto. Todos contienen `version: 1` y `action`.
 Las cadenas identificadoras de mensajes deben ser no vacías, hasta 128 caracteres.
 El servidor limita mensajes entrantes a 32 KiB y lotes a 128 entradas, antes de
