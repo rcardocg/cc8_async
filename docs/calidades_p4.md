@@ -1,6 +1,6 @@
-# P4 — Calidades progresivas y caché de tiles
+# Calidades y caché de tiles — referencia de uso
 
-Actualización documental: 2026-10-06. Código compartido Linux/Windows; evidencia
+Actualización documental: 2026-10-07. Código compartido Linux/Windows; evidencia
 histórica P4 en Windows y revisión vigente en Fedora: [verificacion.md](verificacion.md).
 Esta guía amplía el [RFC interno GTP-001](../protocolo.md); no implica que el visor
 utilice automáticamente todas las variantes ni que haya adaptación q0→q3 integrada.
@@ -21,6 +21,20 @@ utilice automáticamente todas las variantes ni que haya adaptación q0→q3 int
   - Endpoint: `GET /api/cache/stats`, `GET /api/cache/clear`.
 - **Compatibilidad**: catálogo plano y demo siguen sirviendo tiles X/Y/q3; imágenes P3 `ready` exponen calidades.
 
+### Por qué el visor utiliza q3
+
+El nivel `z` ajusta la resolución espacial a la vista; `q` selecciona una variante
+del tile de ese nivel. El visor pide q3 para conservar su detalle sin añadir pérdida
+de codificación. Para detalle nativo hacen falta **ambos**: `z=maxZoom` y `q=3`.
+Generar q0–q2 permite experimentar con representaciones más ligeras, pero no
+demuestra que exista adaptación automática extremo a extremo.
+
+LFU favorece contenido reutilizado; el envejecimiento reduce el peso de popularidad
+antigua y el TTL libera contenido inactivo. La política completa y sus costos se
+explican en el [RFC, sección 10](../protocolo.md#10-políticas-de-memoria-y-ttl).
+La transición desde la LRU del incremento P4 está registrada en la
+[historia de decisiones](historico/README.md#evolución-de-decisiones).
+
 ## Uso desde el cliente (igual en ambos sistemas)
 
 1. Imagen P3 en estado `ready` → metadata incluye `availableQualities: [3]` (q3
@@ -39,22 +53,9 @@ utilice automáticamente todas las variantes ni que haya adaptación q0→q3 int
 | `GET /api/cache/stats` | 200: `entries, usedBytes, maxBytes, hits, misses, evictions, ttlMs, policy` |
 | `GET /api/cache/clear` | 204: vacía la caché |
 
-## WebSocket P4 (extensión de GTP/1 v1)
-
-### fetch_tiles (cliente → servidor)
-```json
-{"version":1,"action":"fetch_tiles","request_id":"r1","imageId":"img1",
- "tiles":[{"z":2,"x":10,"y":5,"q":0}],"replace":true}
-```
-- `z`: 0..maxZoom, predeterminado 0 si omitido/null. Catálogo plano rechaza z/q no nulos.
-- `q`: 0..3. Default 3.
-
-### tile_data (servidor → cliente)
-```json
-{"version":1,"action":"tile_data","request_id":"r1","transfer_id":"1",
- "tile_id":"img1:2:10:5:0","imageId":"img1","x":10,"y":5,"z":2,"q":0,
- "compression":"png","size_bytes":1234,"attempt":1,"data":"BASE64..."}
-```
+Los campos, valores predeterminados y validaciones de `fetch_tiles`/`tile_data`
+se mantienen únicamente como contrato detallado en [GTP/1](protocolo.md).
+Las coordenadas del ejemplo requieren una imagen preparada con ese nivel y rango.
 
 ## Almacenamiento y caché
 
@@ -73,27 +74,23 @@ utilice automáticamente todas las variantes ni que haya adaptación q0→q3 int
 - q1/q2 componen transparencia sobre blanco; q3 conserva bytes del tile PNG del
   nivel. Ninguna variante sustituye por sí sola seleccionar resolución nativa.
 
-## Variantes admitidas
+## Verificación
 
-| q | Formato | Uso típico |
-|---|---|---|
-| 0 | PNG indexado 64×64 | Navegación rápida, presión memoria |
-| 1 | JPEG q50 | Movimiento moderado |
-| 2 | JPEG q85 | Reposo conexión normal |
-| 3 | PNG nativo | Zona fija observada en reposo |
+Los [comandos comunes de verificación](verificacion.md#reproducir-las-pruebas)
+ejecutan `TileQualityServiceTest`, `TileCacheServiceTest` y la integración P4.
+Las suites de calidad cubren q0 indexado, JPEG q1/q2, identidad q3 y transparencia;
+las de caché cubren presupuesto, LFU, envejecimiento, TTL y contadores.
 
-## Pruebas reproducibles en ambos ambientes
+El E2E del visor pide q3. Comprobar `availableQualities:[3]` o que responde
+`/api/cache/stats` no demuestra adaptación q0→q3 ni mide el costo de generar q0.
 
-```text
-# Tests unitarios + integración
-.\scripts\build.cmd test
+Para comprobar TTL del servidor manualmente: solicitar tiles, consultar
+`/api/cache/stats`, dejar de solicitarlos durante más del TTL configurado (31 s
+para el valor predeterminado) y consultar otra vez. Las entradas inactivas deben
+expirar y `policy` debe indicar `LFU_AGING_TTL`. Una lectura acertada del tile en
+caché renueva su TTL; consultar estadísticas no equivale a utilizar cada tile.
 
-# Smoke P4: verificar calidades y stats de caché
-node scripts/verify-browser.cjs .build/server.jar
-# Verificar en metadata que availableQualities incluye 3 y /api/cache/stats responde
-```
-
-## Pendientes para cerrar P4
+## Posibles extensiones y mediciones pendientes
 
 - Generar y cachear q0–q2 en disco opcionalmente (para arranque en caliente).
 - Prefetch de calidades adyacentes.

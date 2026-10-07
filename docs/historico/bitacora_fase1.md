@@ -1,9 +1,13 @@
 # Bitácora de Desarrollo - Fases Iniciales
+
+Archivo histórico. Ubicación original: `bitacora_fase1.md` en la raíz.
+Conservado en la [historia del proyecto](README.md) desde el 2026-10-07.
+
 > **Registro histórico (23-09-2026).** Describe el prototipo inicial con metadata
 > simulada y payloads ficticios. La mención de «funcionamiento exacto del algoritmo
 > TCP» al final era incorrecta: sólo se simulaba una ventana de aplicación, sin
 > aislamiento por cliente ni recuperación. Las correcciones del 02-10-2026 y su
-> verificación están en [docs/fases/README.md](docs/fases/README.md). Los marcadores
+> verificación están en las [bitácoras por fase](../fases/README.md). Los marcadores
 > `[cite: 1]` originales no son referencias bibliográficas verificables.
 **Archivo:** `bitacora_fase1.md`
 **Proyecto:** Servidor Asíncrono Java - Gestión de Imágenes Gigapíxel[cite: 1]

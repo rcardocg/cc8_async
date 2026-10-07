@@ -1,6 +1,6 @@
 # Originales, directorio de trabajo y catálogo local
 
-Revisión documental: 2026-10-06. Arquitectura y decisiones de la solución:
+Revisión documental: 2026-10-07. Arquitectura y decisiones de la solución:
 [RFC interno GTP-001](../protocolo.md). Esta guía conserva configuración y uso operativo.
 
 ## Configuración multiplataforma (P0)
@@ -85,27 +85,22 @@ local, `/data/`, `/work/` y `/.build/` están ignorados por Git.
   mover manualmente catálogo y tiles a la nueva carpeta. No hay migración automática.
 - P1 añade inspección/preflight; P3 incorpora generación real para PNG no Adam7 de hasta 8 bits.
 
-## P1 · Selección desde el cliente e inspección PNG
+## Inspección PNG e inventario
 
-**Corrección de alcance:** los originales del curso son PNG, no ZIP. No se
-implementan extracción de archivos ni lectores TIFF/PSB. El objetivo del visor
-es navegar normalmente con pan y zoom y refinar las regiones visibles. Para
-lograrlo con originales gigantes, primero se generan tiles y niveles con buffers
-de memoria acotados. La navegación multinivel está integrada para imágenes `ready`;
-queda validar originales gigantes, RAM total y legibilidad en el entorno del curso.
+La inspección permite estimar una pirámide antes de preparar el original. El
+recorrido de usuario se mantiene en la [guía de uso](../GUIA_INICIO_Y_PRUEBAS.md);
+los casos manuales están en [pruebas de inspección](pruebas_png_p1.md).
 
 El CLI se despacha antes de Spring. `inspect`, `ladder` e `ingest --dry-run` no crean
 directorios ni tiles. La inspección lee firma e IHDR (33 bytes), verifica CRC de IHDR, dimensiones,
 profundidad/color y método de entrelazado. Detecta PNG por firma aunque la extensión
 sea distinta. **No verifica IDAT/IEND ni demuestra que todo el PNG sea decodificable.**
 
-### Abrir desde el navegador, sin rutas del proyecto
+### API de inspección desde el navegador
 
-Arrancar el servidor y abrir `http://localhost:8081/`. En **Abre tu PNG**,
-elegir un archivo mediante el explorador del sistema. Puede estar en cualquier
-carpeta, sin moverlo al repositorio ni configurar su ruta. El navegador usa
-`file.slice(0, 33)` y envía la cabecera a `POST /api/png/inspect`. Servidor y CLI
-comparten el mismo validador y cálculo de pirámide.
+`POST /api/png/inspect?name=archivo.png&sizeBytes=N&tileSize=256` recibe un cuerpo
+`application/octet-stream` de exactamente 33 bytes. El navegador obtiene esos
+bytes con `file.slice(0, 33)`; servidor y CLI comparten validador y cálculo de pirámide.
 
 El servidor recibe el nombre y tamaño declarado por el navegador, no la ruta
 real ni el permiso de leer ese archivo desde Java. Solo se transmite la cabecera;
@@ -114,21 +109,8 @@ informe HTTP es el nombre suministrado, mientras que en CLI es una ruta de disco
 El endpoint limita el cuerpo a 33 bytes (413 si excede), verifica IHDR y devuelve
 400 ante una cabecera inválida. No comprueba el tamaño real del archivo remoto.
 
-La interfaz muestra dimensiones, color, entrelazado, tiles y estimaciones de
-memoria/disco; permite recalcular con tiles de 256/512 y descargar el JSON.
-Cerrar o cambiar archivo libera la vista previa y descarta respuestas antiguas.
-
-La **vista previa local** solo se decodifica si el PNG tiene como máximo
-4 megapíxeles y el archivo ocupa como máximo 16 MiB. Incluye ajustar, 1:1, zoom
-y navegación por arrastre/desplazamiento. No circula por GTP y no valida el
-preprocesador. En originales grandes se omite la vista para evitar abrirlos
-completos en RAM. La inspección de cabecera sigue disponible.
-
-Seleccionar el original solo lo inspecciona. **Registrar imagen** persiste metadata;
-**Transferir y preparar imagen** genera la pirámide. Cuando está `ready`, **Tu imagen**
-permite navegarla con canvas, pan/zoom y respaldo. Demo/catálogo plano quedan en
-Diagnóstico, sin segmento público «Visor de tiles preparados».
-Ver [registro_p2.md](registro_p2.md), [ingesta_p3.md](ingesta_p3.md) y [visor_p6.md](visor_p6.md).
+La respuesta no se cachea. Inspección no cambia el catálogo ni inicia GTP.
+Registro, subida y generación de tiles se describen en [ingesta](ingesta_p3.md).
 
 ### CLI para inventario y preflight
 
@@ -177,18 +159,7 @@ No es una reserva ni garantía de ocupación: compresión, precisión de 16 bits
 overhead del sistema de archivos deben medirse con los originales reales. Dos filas
 son un **mínimo**, no el consumo máximo del decoder, la JVM o una banda de tiles.
 
-### Pipeline PNG P3 inicial
-
-PNG no permite saltar a un tile arbitrario dentro del flujo Deflate. El pipeline
-recorre IDAT secuencialmente, invierte filtros con filas anterior/actual y genera
-tiles sin retener la imagen completa. **No usa `ImageIO.read(original)`** ni acumula
-`ancho × alto` píxeles. La banda se vuelca a disco; los niveles reducidos se generan
-desde tiles acotados. Soporta grayscale, paletas, RGB y alpha hasta 8 bits;
-Adam7 y 16 bits siguen pendientes. Ver [ingesta_p3.md](ingesta_p3.md).
-
-Pruebas recomendadas: [pruebas_png_p1.md](pruebas_png_p1.md).
-
-## Formato implementado
+## Catálogo plano de tiles preprocesados
 
 `images.directory` apunta al directorio de trabajo (por defecto `./data/work`,
 relativo al directorio desde donde se inicia Java). No se incluye en Git.

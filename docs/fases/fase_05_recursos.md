@@ -1,5 +1,7 @@
 # Fase 05 — Recursos y monitoreo
 
+**Bitácora histórica por fecha.** Políticas actuales: [RFC §10](../../protocolo.md#10-políticas-de-memoria-y-ttl).
+
 ## 2026-10-02 · Implementación y resolución
 
 **Problemas:** cola ilimitada, ausencia de límite de bytes y estado compartido;
@@ -28,3 +30,23 @@ el defecto en el histórico; no se implementó esa fórmula incorrecta.
 de hit rate, estimación de ancho de banda/FPS ni telemetría automática de memoria.
 Los 4 MiB acotan payloads, no todo el heap; WebSocket/JSON/Base64 agregan buffers.
 Se requieren mediciones con los datasets reales antes de ajustar límites y optimizar.
+
+## 2026-10-05 / 2026-10-06 · P4–P7 — registro recopilado el 2026-10-07
+
+**Evolución registrada:** P4 incorporó variantes q0–q3 y caché LRU acotada por
+bytes. P5 la sustituyó por LFU con envejecimiento y TTL. Se conservan ambos hechos
+en sus [ejecuciones fechadas](../historico/verificaciones.md).
+
+**Motivo de la política actual:** frecuencia para reutilización, envejecimiento
+para reducir popularidad antigua y TTL para retirar inactividad. No usa LRU/FIFO
+ni la fórmula híbrida errónea de la propuesta; no se afirma superioridad general
+sin comparación experimental.
+
+Cliente: bitmaps estimados como RGBA, protección de visibles/respaldo, expulsión
+espacial y TTL fuera de vista. Presupuestos codificados y decodificados separados
+evitan equiparar compresión con consumo de RAM.
+
+**Evidencia original:** suites de caché/calidades, E2E y [benchmark P7](../experimentos_p7.md).
+Los ensayos del visor q3 no ejercitan el costo temporal del histograma q0 (~64 MiB).
+Contadores de caché/bitmaps no representan todo el heap/RSS ni telemetría exacta
+del navegador. Adaptación automática y mediciones con originales siguen pendientes.

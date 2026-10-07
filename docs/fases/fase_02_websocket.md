@@ -1,5 +1,7 @@
 # Fase 02 — WebSocket, control y recuperación
 
+**Bitácora histórica por fecha.** Contrato actual: [GTP/1](../protocolo.md).
+
 ## 2026-10-02 · Implementación y resolución
 
 **Problemas:** una sola cola/ventana para todos los clientes; cada conexión borraba
@@ -27,3 +29,21 @@ continúan. `ServerIntegrationTest` prueba retransmisión sobre un WebSocket rea
 **Estado:** base implementada. Es control de consumo de tiles sobre TCP, no una
 implementación TCP. No hay ACK por rangos/SACK ni persistencia de sesiones. Detalle
 de algoritmos, mensajes y límites: [protocolo.md](../protocolo.md).
+
+## 2026-10-06 · Continuación P5 — registro recopilado el 2026-10-07
+
+**Necesidad:** el incremento multinivel requirió corregir el handler activo y
+mantener consistentes cola, cancelación y presupuestos durante la recuperación.
+
+**Cambio registrado:** extracción de cola y avance después de fallos de lectura,
+cancelación parcial de tiles en vuelo, RGBA calculado por dimensiones, contadores
+independientes y SRTT/RTTVAR/Karn. Fragmentación opcional con ACK de fragmento para
+liberar crédito y ACK de tile tras decodificar. Timeout reinicia el tile completo.
+Las pruebas instancian el handler V2 registrado en `WebSocketConfig`.
+
+**Evidencia original:** [primer incremento P5/P6](../historico/renderizado_p5.md)
+y [verificación del 2026-10-06](../historico/verificaciones.md#2026-10-06--p5p6-primer-renderizado-multinivel-y-ttl).
+Esta recopilación no ejecuta nuevamente esos casos.
+
+**Límites:** sigue siendo GTP/1; no hay SACK por rangos, recuperación selectiva de
+fragmentos ni reanudación persistente entre sesiones.

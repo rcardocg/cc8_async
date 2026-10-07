@@ -1,6 +1,7 @@
-# P6 — navegación integrada y respaldo permanente
+# Visor — navegación integrada y respaldo permanente
 
-Actualización: 2026-10-06. Primer cierre funcional del visor, verificado en Fedora.
+Revisión documental: 2026-10-07. Guía de la interacción actual; la evidencia de
+ejecución del incremento P6 está fechada en [verificación](verificacion.md).
 
 Esta guía describe interacción y pruebas del cliente especificado en el
 [RFC interno GTP-001](../protocolo.md); el contrato de campos está en
@@ -41,15 +42,11 @@ Al iniciar se prefiere una imagen del usuario antes que la demo sintética.
 
 ## Interacción y presentación
 
-Skill utilizado: `emil-design-eng`, instalado en `~/.claude/skills/`.
-Sin dependencias nuevas de producción, fuentes descargadas ni recursos externos.
-
-| Before | After | Why |
-|---|---|---|
-| Secciones de laboratorio numeradas y grilla de tiles pública | Flujo archivo → preparación → exploración integrado | La interfaz sigue la tarea del usuario. |
-| Vista podía quedar sin respaldo tras TTL | Nivel 0 protegido y progreso de cobertura | Se mantiene contexto visual mientras llega el detalle. |
-| Cancelación total en cada cambio de región | Cancelación parcial y conservación de tiles útiles | Menos trabajo desperdiciado y navegación continua. |
-| Botones sin respuesta de pulsación ni navegación por teclado en canvas | Pulsación sutil, foco, teclas, movimiento reducido | Interacción predecible y accesible. |
+El respaldo mantiene contexto mientras llega el detalle; la cancelación parcial
+evita descartar tiles que siguen siendo útiles. El flujo archivo → preparación →
+exploración organiza la interfaz según la tarea del usuario. La evolución desde
+el primer visor está en la [bitácora de cliente](fases/fase_03_viewport.md).
+No se descargan fuentes ni recursos externos durante la ejecución.
 
 Teclas con canvas enfocado: flechas para pan, `+`/`−` para zoom, `0` ajustar y
 `1` resolución nativa. No se anima la interacción de teclado. La captura del
@@ -76,6 +73,14 @@ Para verificar a mano:
 5. Enfocar el canvas y usar flechas, `+`, `−`, `0`, `1`. Arrastrar hasta los bordes.
 6. Cambiar ancho de ventana con Ajustar activo; probar móvil y movimiento reducido.
 7. Simular omisión de ACK/ventana 1500 bytes; la vista debe completar el mismo detalle.
+
+Para la regresión del incremento P5, recorrer esquinas con tiles de borde parciales,
+comparar una región nativa entre ventana 0 y 1500 (evitar únicamente hits de caché),
+simular presión de 90% durante recuperación y abrir una segunda pestaña. Debe
+conservarse el detalle, no solicitar coordenadas inválidas ni mezclar clientes.
+Tras reconectar, se solicita otra vez la imagen seleccionada. La comprobación de
+TTL del servidor está en [calidades y caché](calidades_p4.md#verificación).
+El [registro P5](historico/renderizado_p5.md) conserva la tabla y evidencia originales.
 
 Siguiente fase: [experimentos_p7.md](experimentos_p7.md).
 Pendientes de cierre de evaluación: PNG gigantes reales, legibilidad humana de

@@ -1,14 +1,19 @@
 # P5/P6 — primer visor multinivel, fragmentos y TTL
 
+**Registro histórico del incremento del 2026-10-06**, archivado el 2026-10-07.
+Ubicación original: `docs/renderizado_p5.md`. Conserva correcciones, pruebas y
+límites de ese corte; la [guía actual del visor](../visor_p6.md) incorpora su
+continuación. [Índice histórico](README.md).
+
 Fecha: 2026-10-06. Implementación compartida Java/JS, ejecutada en Fedora.
 
 **Continuación P6/P7:** el respaldo de nivel 0 ya está protegido y solicitado
 explícitamente; la interfaz y cola de vistas se completaron en
-[visor_p6.md](visor_p6.md). Primer benchmark/evidencia en
-[experimentos_p7.md](experimentos_p7.md). Las notas siguientes registran el
+[visor_p6.md](../visor_p6.md). Primer benchmark/evidencia en
+[experimentos_p7.md](../experimentos_p7.md). Las notas siguientes registran el
 primer incremento P5/P6 previo a esa continuación.
 
-El documento principal vigente es el [RFC interno GTP-001](../protocolo.md).
+El documento principal vigente es el [RFC interno GTP-001](../../protocolo.md).
 
 ## Resultado de esta fase
 

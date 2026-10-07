@@ -1,30 +1,33 @@
 # Bitácoras de implementación y resolución
 
-Revisión: **2026-10-06**. Documento principal: [RFC interno GTP-001](../../protocolo.md).
-Se conserva la numeración de cinco fases de comunicación
-de la propuesta; fase 00 registra la preparación transversal. Cada archivo indica
-problema, resolución, evidencia y pendientes. «Base implementada» no significa que
-la evaluación final con imágenes gigantes esté completada.
+Índice revisado el **2026-10-07**. Cada entrada conserva lo que cambió y lo que
+se había verificado **en su fecha**. Para el comportamiento actual, leer el
+[RFC interno GTP-001](../../protocolo.md) y el [contrato](../protocolo.md).
 
-| Fase | Registro | Estado |
+## Registros por área
+
+| Fase | Bitácora | Qué registra |
 |---|---|---|
-| 00 | [Entorno y trazabilidad](fase_00_entorno.md) | Java 21 y verificación reproducible |
-| 01 | [Bootstrap HTTP y metadata](fase_01_bootstrap.md) | Catálogo y validación implementados |
-| 02 | [WebSocket y recuperación](fase_02_websocket.md) | Protocolo por sesión implementado |
-| 03 | [Región visible y cliente](fase_03_viewport.md) | Canvas multinivel, pan/zoom, respaldo y cancelación parcial; predicción pendiente |
-| 04 | [Transferencia de tiles](fase_04_tiles.md) | Pirámide PNG y GTP/1 multinivel/fragmentación implementados; datasets gigantes pendientes |
-| 05 | [Recursos y monitoreo](fase_05_recursos.md) | LFU envejecida+TTL, presupuestos/estimación RGBA y benchmark; adaptación automática pendiente |
+| 00 | [Entorno y trazabilidad](fase_00_entorno.md) | Java/Maven, rutas, alcance PNG, ambientes y reorganización documental |
+| 01 | [Bootstrap HTTP y metadata](fase_01_bootstrap.md) | Catálogo real, registro y persistencia |
+| 02 | [WebSocket y recuperación](fase_02_websocket.md) | Aislamiento por cliente, ACK, ventanas, recuperación y correcciones P5 |
+| 03 | [Región visible y cliente](fase_03_viewport.md) | De la grilla plana al canvas con respaldo y cancelación parcial |
+| 04 | [Transferencia de tiles](fase_04_tiles.md) | Payload real, ingesta PNG, pirámides y límites de transferencia |
+| 05 | [Recursos y monitoreo](fase_05_recursos.md) | Presupuestos, evolución de caché, TTL y alcance de las métricas |
 
-Los registros fechados de cada archivo son históricos; sus límites se interpretan
-en esa fecha, no como estado vigente. La numeración P0–P7 del plan de desarrollo es
-distinta de estas fases de comunicación. Las continuaciones actuales están en
-[P3](../ingesta_p3.md), [P4](../calidades_p4.md), [P5](../renderizado_p5.md),
-[P6](../visor_p6.md) y [P7](../experimentos_p7.md).
+La numeración 00–05 agrupa áreas de comunicación de la propuesta original; P0–P7
+identifica incrementos de desarrollo. Las entradas recopiladas después de un
+incremento indican la fecha de recopilación y enlazan su evidencia original.
 
-La bitácora antigua mezclaba las fases 1 y 2 en `bitacora_fase1.md` y llamaba a la
-simulación «TCP exacto». Se conserva como registro histórico, con una corrección
-visible. La propuesta anterior se conserva en `docs/propuesta_original.md`.
+## Antecedentes y evidencia
 
-Para próximas implementaciones, agregar entradas fechadas a la fase correspondiente
-con: **objetivo → fallo observado → cambio → verificación → límites pendientes**.
-No registrar como completadas características descritas únicamente en propuestas.
+- [Historia seccionada y evolución de decisiones](../historico/README.md).
+- [Bitácora inicial del 2026-09-23](../historico/bitacora_fase1.md), con aclaración
+  sobre simulación y la afirmación incorrecta de “TCP exacto”.
+- [Propuesta original](../historico/propuesta_original.md).
+- [Resultados fechados](../historico/verificaciones.md) y [pruebas actuales](../verificacion.md).
+
+Para próximos cambios, agregar entradas con **objetivo → fallo/necesidad → cambio
+y motivo → verificación → límites pendientes**. Conservar entradas anteriores;
+las correcciones se agregan con fecha. No registrar propuestas como funciones
+completadas ni una revisión documental como ejecución de pruebas del sistema.

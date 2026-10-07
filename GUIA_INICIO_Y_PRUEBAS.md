@@ -1,321 +1,303 @@
-# Guía de inicio y comprobación del servidor
+# Guía de compilación, uso y diagnóstico
 
-**Actualización documental:** 2026-10-06
-**Objetivo actual:** abrir/preparar un PNG y navegarlo mediante GTP/1, conservando
-detalle y verificando confirmación, recuperación y memoria. Especificación de la
-solución: [RFC interno GTP-001](protocolo.md); pruebas del visor en
-[docs/visor_p6.md](docs/visor_p6.md) y ensayos en [docs/experimentos_p7.md](docs/experimentos_p7.md).
+Revisión documental: **2026-10-07**. Guía común para Windows/PowerShell y
+Fedora/Bash. Reúne el arranque, la carga de imágenes y el diagnóstico que antes
+estaban repartidos entre dos guías. La explicación de los mecanismos está en el
+[RFC interno GTP-001](protocolo.md); sus campos exactos, en el
+[contrato GTP/1](docs/protocolo.md).
 
-**Ambos ambientes:** rutas/lanzadores en [docs/imagenes.md](docs/imagenes.md),
-registro en [docs/registro_p2.md](docs/registro_p2.md) e ingesta real con comandos
-equivalentes para Fedora y Windows en [docs/ingesta_p3.md](docs/ingesta_p3.md).
-En Fedora: `bash scripts/build.sh` y `bash scripts/gtp.sh`.
-En Windows: `.\scripts\build.cmd` y `.\scripts\gtp.cmd`.
-Los ejemplos de diagnóstico PowerShell de esta guía siguen siendo válidos.
+## 1. Preparar el entorno
 
-Este archivo está en la raíz del proyecto, al mismo nivel que `bitacora_fase1.md`.
+Abre una terminal en la raíz del proyecto, donde está `pom.xml`.
+Necesitas **JDK 21 y Maven 3.9+** para compilar:
 
-## 1. Qué necesitas abrir
-
-- **Terminal 1 — PowerShell:** mantiene el servidor Java en ejecución.
-- **Navegador — Edge o Chrome:** muestra el visor y los mensajes del protocolo.
-- **Terminal 2 — PowerShell (opcional):** permite consultar la API mientras el
-  servidor sigue ejecutándose en la primera terminal.
-
-Para la prueba manual basta Java 21 y el JAR compilado. El frontend está incluido
-en Java: no hay que arrancar otro servidor frontend, una base de datos ni Docker.
-La demo incluida permite observar el intercambio sin preparar imágenes externas.
-
-## 2. Inicio rápido en Windows
-
-### 2.1. Abrir la carpeta correcta
-
-En la Terminal 1:
-
-```powershell
-Set-Location -LiteralPath "C:\ruta\al\cc8_async"
+```text
 java -version
-Test-Path -LiteralPath ".build/server.jar"
+javac -version
+mvn -version
 ```
 
-**Esperado:** Java versión **21** y `True` para el archivo JAR. Al preparar esta
-guía se verificaron Java 21.0.11 y ese JAR en este equipo.
+Maven también debe mostrar Java 21. Si usa otra versión, revisa `JAVA_HOME` y
+`PATH`. Si `mvn` no se reconoce, agrega la carpeta `bin` de tu instalación de Maven
+al `PATH` y abre otra terminal. Usa rutas de tu equipo; una instalación temporal
+utilizada en pruebas anteriores puede haber desaparecido.
 
-Si aparece `False`, compila siguiendo la sección 7 antes de continuar.
+Para ejecutar un JAR ya compilado basta Java 21. Node.js y Playwright se usan solo
+en verificaciones opcionales. El frontend y las dependencias de ejecución están
+incluidos en Java; no hace falta un servidor frontend separado ni base de datos.
 
-### 2.2. Encender el servidor
+### Elegir dónde guardar los datos
+
+Los originales y el directorio de trabajo deben estar separados: no pueden
+coincidir ni estar uno dentro del otro. Los valores predeterminados son
+`data/originales` y `data/work`. Para usar otras carpetas:
+
+Windows / PowerShell:
 
 ```powershell
-java -jar ".build/server.jar" --images.demo-enabled=true
+$env:GTP_IMAGES = Join-Path $env:USERPROFILE 'gtp-datos/originales'
+$env:GTP_WORK = Join-Path $env:USERPROFILE 'gtp-datos/work'
+$env:GTP_PORT = '8081'
 ```
 
-Deja esta terminal abierta. Que el comando no devuelva inmediatamente el prompt
-es normal: Java está atendiendo conexiones.
+Fedora / Bash:
 
-Busca mensajes parecidos a estos; los tiempos y el PID pueden cambiar:
+```bash
+export GTP_IMAGES="$HOME/gtp-datos/originales"
+export GTP_WORK="$HOME/gtp-datos/work"
+export GTP_PORT=8081
+```
+
+Estas variables duran la sesión de terminal. Al volver a arrancar, usa el mismo
+`GTP_WORK` para recuperar tu catálogo. El servidor crea las carpetas que falten.
+La [referencia de configuración](docs/imagenes.md) describe permisos, disco,
+presupuestos, configuración local y precedencia de argumentos.
+
+**Si eliges el PNG desde el navegador**, puede estar en cualquier carpeta de tu
+equipo: no necesitas moverlo a `GTP_IMAGES`. Se enviará una copia por bloques al
+work. `GTP_IMAGES` sirve para originales que Java puede leer directamente.
+
+## 2. Compilar y arrancar
+
+Windows / PowerShell:
+
+```powershell
+.\scripts\build.cmd
+# Continuar únicamente después de BUILD SUCCESS.
+.\scripts\gtp.cmd
+```
+
+Fedora / Bash:
+
+```bash
+bash scripts/build.sh
+# Continuar únicamente después de BUILD SUCCESS.
+bash scripts/gtp.sh
+```
+
+`build` ejecuta las pruebas y genera **`.build/server.jar`**. Un JAR que ya existe
+puede ser de una compilación anterior si el build falla. Para aplicar cambios de
+código: detener Java, compilar y volver a arrancar.
+
+Deja la terminal abierta. Busca mensajes parecidos a:
 
 ```text
 Tomcat started on port 8081 (http) with context path ''
-Started GigapixelServerApplication in ... seconds
+Started GigapixelServerApplication ...
 ```
 
-Estas líneas confirman que el servidor arrancó y escucha conexiones; todavía no
-demuestran que haya recibido una solicitud de tiles.
+Abre **http://localhost:8081/** en Edge, Chrome o Chromium. Abrir `index.html`
+directamente desde el explorador no sustituye el arranque del servidor.
+Los recursos se sirven localmente; la primera compilación necesita disponer de
+las dependencias Maven, pero el JAR empaquetado no depende de CDN ni servicios externos.
 
-### 2.3. Abrir el visor
+Para otro puerto, cambia `GTP_PORT` antes de ejecutar el lanzador, o arranca desde
+la raíz con `java -jar .build/server.jar --server.port=8082`. Usa ese puerto tanto
+en el navegador como en las consultas HTTP; el WebSocket toma el origen de la página.
 
-En el navegador entra a:
+## 3. Elegir, preparar y navegar tu PNG
 
-**http://localhost:8081/**
+Empieza con un PNG pequeño RGB/RGBA de 8 bits, sin entrelazado. La tabla completa
+de variantes admitidas está en [registro e ingesta](docs/ingesta_p3.md#variantes-admitidas).
+Una cabecera válida no garantiza que el archivo completo sea íntegro o compatible.
 
-Abre esa dirección HTTP, en lugar del archivo HTML directamente desde el explorador.
-El navegador obtiene HTML, CSS, JavaScript, metadata y tiles desde Java.
+1. En **Abre tu PNG**, pulsa **Elegir archivo PNG**. Se envían solo 33 bytes para
+   inspeccionar firma/IHDR/CRC. Revisa dimensiones, color, estimaciones y tamaño
+   de tile (256 px para la primera prueba); puedes descargar el informe JSON.
+2. Si tiene como máximo 4 megapíxeles y 16 MiB, aparece una vista previa **local**.
+   Esta preview no demuestra transferencia GTP ni procesamiento en Java.
+3. Escribe un ID, por ejemplo `prueba_01`, y pulsa **Registrar imagen**. Debe quedar
+   `pending`, con cero tiles procesados. El ID acepta letras, números, `_` y `-`;
+   se selecciona automáticamente en **Tu imagen**.
+4. Con el mismo archivo e ID, pulsa **Transferir y preparar imagen**. Primero verás
+   bytes subidos; después `processing` y avance de generación de tiles.
+5. Al finalizar debe aparecer `ready`, con conteos completos. En metadata,
+   `completedLevels` incluye todos los niveles y `availableQualities` contiene 3.
+6. Navega con **Ajustar**, **1:1**, rueda y arrastre. El nivel 0 conserva una vista
+   general de respaldo mientras llega el detalle. Con el canvas enfocado, usa
+   flechas, `+`/`−`, `0` para ajustar y `1` para resolución nativa.
 
-Para probar tu original, elegirlo en **Abre tu PNG**, registrar y pulsar
-**Transferir y preparar imagen**. Al llegar a `ready`, aparece en **Tu imagen**:
-Ajustar muestra la vista general, 1:1 conserva detalle nativo y arrastre/rueda
-navegan la región. El progreso cuenta tiles visibles y el nivel 0 queda de respaldo.
+La inspección y el registro no transfieren el original completo. La subida sí
+envía una copia hacia Java; la navegación posterior recibe solo tiles por GTP.
+`pending` durante la subida es normal: el decoder todavía no ha comenzado.
 
-Para el diagnóstico plano, seleccionar `demo_numeros` y abrir **Diagnóstico del
-protocolo → Compatibilidad de catálogo plano / demo sintética**. Con columna/fila
-en `0`, debes ver:
+Por ejemplo, un PNG de 300×280 con tiles de 256 genera cuatro tiles nativos en
+`z=1` y uno reducido en `z=0`: cinco en total. La salida de una imagen subida es:
 
-1. Metadata: imagen **4096 × 4096**, tiles de **256 px**, **256 tiles**, formato PNG.
-2. Una región de **4 columnas × 3 filas**, con números y coordenadas visibles.
-3. El estado:
+```text
+<GTP_WORK>/prueba_01/
+  meta.json
+  source.part
+  tiles/
+    complete.sha256
+    0/0_0.png
+    1/0_0.png
+    ...
+```
+
+`source.part` se conserva después del éxito; su nombre no indica por sí solo una
+subida incompleta. El estado persistido es la referencia. Los niveles previstos
+en metadata tampoco equivalen a tiles terminados: deben estar publicados como `ready`.
+
+### Detener, continuar y reintentar
+
+| Situación | Qué hacer y qué se conserva |
+|---|---|
+| Detener subida | Pulsar **Detener**. Los bloques recibidos permanecen. Elegir el mismo archivo e ID para continuar desde el offset del servidor. |
+| Cancelar procesamiento | **Detener** solicita interrumpir el decoder. Esperar `failed` y reintentar explícitamente. El procesamiento empieza desde el principio del PNG. |
+| Copia subida incorrecta | **Reiniciar transferencia** descarta la copia de un registro pendiente/fallido no activo. Para otro original, usar otro ID. |
+| Recargar el navegador | El procesamiento activo sigue en Java; consultar estado. Para continuar una subida, volver a seleccionar el original. |
+| Reiniciar Java | Usar el mismo work. Los registros persisten; un procesamiento interrumpido se marca fallido y requiere reintento. |
+
+No vuelvas a registrar el mismo ID para continuar: el duplicado se rechaza.
+Nombre, tamaño y cabecera iguales no prueban que dos archivos tengan el mismo contenido.
+La API, los errores y los comandos de ingesta desde originales del servidor están
+en [registro e ingesta](docs/ingesta_p3.md). Para inventario y preflight por CLI,
+consulta [configuración e inspección](docs/imagenes.md#cli-para-inventario-y-preflight).
+
+## 4. Diagnóstico del protocolo
+
+La demo permite probar GTP sin preparar un original. Selecciona `demo_numeros`
+y abre **Diagnóstico del protocolo → Compatibilidad de catálogo plano / demo sintética**.
+La demo está habilitada por defecto; si la deshabilitaste, reinicia el JAR con
+`--images.demo-enabled=true`.
+
+En columna/fila 0 se muestran 12 tiles (4×3) de una imagen sintética 4096×4096,
+con tiles de 256 px. Al terminar:
 
 ```text
 Terminada: 12/12 confirmados; 0 fallidos. Puede volver a cargar la región.
 ```
 
-Ese estado proviene de un mensaje `request_complete` del servidor: confirma que
-Java procesó los ACKs de los 12 tiles. Cerca de los bordes puede haber menos de 12.
+Cerca de los bordes puede haber menos tiles. Ese resultado procede de
+`request_complete`: Java recibió los ACK de aplicación. La demo no representa
+el PNG seleccionado ni una prueba de originales gigantes.
 
-## 3. Ver actividad en la propia página
+### Ver HTTP y WebSocket en DevTools
 
-Abre **Diagnóstico del protocolo**, debajo de la región de imágenes.
+1. Pulsa **F12**, abre **Network / Red** y recarga con la grabación activa.
+2. En **Fetch/XHR**, revisa `/api/images` y `/api/image/{id}/metadata`.
+   En **Response** puedes leer el JSON. `/`, JS y CSS son recursos del mismo origen.
+3. En **WS**, selecciona `tiles`, cuya URL termina en `/ws/tiles`, y abre
+   **Messages / Mensajes**. En HTTP local, el handshake normalmente muestra 101.
+4. Pulsa **Actualizar vista** y relaciona los mensajes por sus identificadores:
 
-Encontrarás entradas como:
-
-```text
-Conectado: GTP/1
-Solicitados 12 tiles.
-Tile demo_numeros:0:0, intento 1; ACK después de decodificar.
-```
-
-Pulsa **Actualizar vista** o una flecha de diagnóstico para generar actividad. El panel muestra:
-
-| Dato | Qué significa |
-|---|---|
-| `cwnd` | Ventana de transmisión de esa sesión |
-| `en vuelo` | Tiles enviados cuyo ACK todavía espera el servidor |
-| `cola` | Tiles pendientes de enviar |
-| `RTT aplicación` | En tile entero: envío a ACK; en fragmentos: último fragmento enviado a ACK de tile, con procesamiento del cliente |
-| `RTO` | Intervalo base usado para esperar confirmación antes de retransmitir |
-
-En localhost todo puede ocurrir muy rápido. Las métricas mostradas son la última
-instantánea enviada, no un monitor continuo de actividad: `transfer_state` se
-emite tras un ACK y antes del siguiente envío. Cuando la región termina y no haces
-nada más, no es necesario que aparezcan nuevos mensajes. El servidor sigue activo.
-
-## 4. Confirmar exactamente qué recibe y responde Java
-
-### 4.1. Ver solicitudes HTTP
-
-1. Pulsa **F12** en Edge/Chrome.
-2. Abre **Network / Red** y deja activada la grabación.
-3. Recarga la página con F12 abierto.
-4. En **All / Todo** o **Fetch/XHR**, busca las solicitudes siguientes:
-
-| Solicitud | Respuesta esperada |
-|---|---|
-| `/` | Página del visor; normalmente HTTP 200 |
-| `/viewer.js` y `/viewer.css` | Recursos locales; pueden aparecer desde caché |
-| `/api/images` | HTTP 200 y un arreglo que contiene `demo_numeros` |
-| `/api/image/demo_numeros/metadata` | HTTP 200 y metadata de la demo |
-
-Selecciona una solicitud y abre **Response / Respuesta** para leer el JSON.
-Puedes activar **Disable cache / Deshabilitar caché** mientras DevTools está abierto
-si deseas observar nuevas solicitudes de los recursos al recargar.
-
-### 4.2. Ver la conversación WebSocket en vivo
-
-1. En **Network / Red**, selecciona el filtro **WS**.
-2. Busca la conexión `tiles`, cuya URL termina en **`/ws/tiles`**.
-3. Selecciónala y abre **Messages / Mensajes** (en algunas versiones, **Frames**).
-4. Pulsa **Actualizar vista** en el visor sin cerrar DevTools.
-
-En la conexión HTTP local normal verás **101 Switching Protocols** al establecer
-el WebSocket. Después observa los mensajes, identificándolos por `action`:
-
-| Dirección | Acción | Evidencia |
+| Dirección | Acción | Qué demuestra |
 |---|---|---|
-| Java → navegador | `ready` | Java aceptó la conexión y anunció GTP/1 |
-| Navegador → Java | `fetch_tiles` | El navegador solicitó coordenadas concretas |
-| Java → navegador | `request_accepted` | Java recibió y validó la solicitud |
-| Java → navegador | `tile_data` | Java envió los bytes de un tile |
-| Navegador → Java | `ack_tile` | El navegador confirmó el tile decodificado |
-| Java → navegador | `transfer_state` | Java procesó un ACK válido y actualizó su estado |
-| Java → navegador | `request_complete` | Java terminó la solicitud y resumió éxitos/fallos |
+| Java → cliente | `ready` | Conexión aceptada y GTP/1 anunciado |
+| Cliente → Java | `fetch_tiles` | Región solicitada |
+| Java → cliente | `request_accepted` | Solicitud recibida y validada |
+| Java → cliente | `tile_data` o `tile_fragment` | Payload enviado |
+| Cliente → Java | `ack_fragment`, si corresponde | Fragmento almacenado y crédito liberable |
+| Cliente → Java | `ack_tile` | Tile reconstruido/decodificado y procesado |
+| Java → cliente | `transfer_state` | Estado actualizado tras un ACK de tile válido |
+| Java → cliente | `request_complete` | Lote terminado, con confirmados, fallidos y cancelados |
 
-Los envíos de tiles y ACKs pueden intercalarse. Usa `request_id` para relacionar una
-región, y `transfer_id`/`tile_id` para relacionar un tile con su ACK.
+`request_id` identifica el lote; `transfer_id` y `tile_id` relacionan payload y ACK.
+Ver solo una solicitud saliente no demuestra que Java la haya procesado. Los tiles
+viajan en Base64 dentro del WebSocket: no aparece una petición HTTP `.png` por tile.
 
-**La comprobación más clara de recepción es ver `request_accepted` como respuesta a
-`fetch_tiles`, y después `request_complete` con `acknowledged: 12` y `failed: 0`.**
-Ver sólo un mensaje saliente del navegador no basta para confirmar su procesamiento.
+### Interpretar el panel
 
-Los tiles viajan dentro de mensajes WebSocket, en el campo Base64 `data`: no debes
-esperar una solicitud HTTP `.png` separada por cada tile en la pestaña Network.
+| Dato | Significado |
+|---|---|
+| `cwnd` | Ventana de aplicación adaptada a ACK/latencia |
+| Ventana del receptor | Máximo de tiles pendientes según la política receptora |
+| En vuelo / cola | Tiles enviados sin ACK / pendientes de enviar |
+| RTT aplicación | En tile entero: envío a ACK; en fragmentos: último fragmento enviado a ACK de tile |
+| RTO | Intervalo base de espera antes de retransmitir |
 
-## 5. Consultar la API desde otra terminal
+`transfer_state` se emite tras un ACK y antes de nuevos envíos; la pantalla muestra
+la última instantánea, no un monitor continuo. El RTT incluye procesamiento del
+cliente. La presión manual está etiquetada como **simulación**; el visor normal
+estima bytes RGBA de bitmaps, no todo el heap del navegador.
 
-Con el servidor todavía activo en la Terminal 1, ejecuta en la Terminal 2:
+### Pruebas manuales cortas
+
+| Prueba | Acción y resultado esperado |
+|---|---|
+| Otra región | Usar una flecha de diagnóstico: cambian coordenadas y aparece otro intercambio completo. |
+| Recuperación | Activar **Omitir un ACK**, cargar una región y esperar. Se repite el mismo `transfer_id` con `attempt:2`; debe terminar sin fallos. Desactivar al acabar. |
+| Flujo por memoria | Enviar presión simulada de 90%: `adjust_strategy` anuncia ventana receptora 2; con 20%, vuelve a 32. `cwnd` puede limitarla más. |
+| Dos clientes | Abrir otra pestaña y cambiar una región: cada conexión conserva su propio estado. |
+| Fragmentación | Con imagen procesada, elegir 1500 bytes y cargar una región no cacheada. Observar fragmentos y ACK; el detalle final se conserva. |
+| Cancelación/reconexión | Cambiar rápidamente de vista, cancelar o reconectar: la región antigua no debe reemplazar la actual. |
+| TTL/respaldo | En imagen procesada, cambiar de región y esperar más de 5 s: permanecen los visibles y el respaldo nivel 0. |
+
+Omitir un ACK prueba recuperación de aplicación, no pérdida de paquetes TCP.
+Una ventana de 1500 bytes es crédito de payload GTP, no MTU de red. Para pruebas
+de navegación/bordes/teclado, consulta [visor](docs/visor_p6.md); para mediciones
+comparables y hashes, [experimentos P7](docs/experimentos_p7.md).
+
+## 5. Consultar HTTP y logs
+
+Mientras Java sigue en la primera terminal, abre otra.
+
+PowerShell:
 
 ```powershell
-Invoke-RestMethod -Uri "http://localhost:8081/api/images"
+$base = 'http://localhost:8081'
+$id = 'prueba_01'
+Invoke-RestMethod "$base/api/images"
+Invoke-RestMethod "$base/api/image/$id/status" | Format-List
+Invoke-RestMethod "$base/api/image/$id/metadata" | ConvertTo-Json -Depth 10
+Invoke-RestMethod "$base/api/image/$id/upload" | Format-List
+(Invoke-WebRequest "$base/api/images" -UseBasicParsing).StatusCode
 ```
 
-Esperado: `demo_numeros` y cualquier otra imagen registrada en tu catálogo.
+Bash:
 
-```powershell
-Invoke-RestMethod -Uri "http://localhost:8081/api/image/demo_numeros/metadata" | Format-List
+```bash
+curl -i http://localhost:8081/api/images
+curl http://localhost:8081/api/image/prueba_01/status
+curl http://localhost:8081/api/image/prueba_01/metadata
+curl http://localhost:8081/api/image/prueba_01/upload
 ```
 
-Esperado:
+Sustituye el ID por uno existente. Después de una ingesta exitosa, `/status`
+debe indicar `ready`, `sourceState:verified`, conteos completos y sin causa de error.
+
+El log normal no imprime cada tile/ACK. Para observar HTTP y conexiones, detén
+Java con **Ctrl+C** y reinicia desde la raíz:
 
 ```text
-imageId    : demo_numeros
-width      : 4096
-height     : 4096
-tileSize   : 256
-totalTiles : 256
-maxZoom    :
-format     : png
+java -jar .build/server.jar --logging.level.org.springframework.web.servlet.DispatcherServlet=DEBUG --logging.level.org.springframework.web.socket=DEBUG
 ```
 
-Para comprobar el código HTTP explícitamente:
+Los mensajes GTP exactos se consultan en DevTools. El silencio después del arranque
+o al terminar una región no significa que Java haya dejado de atender.
 
-```powershell
-(Invoke-WebRequest -Uri "http://localhost:8081/api/images" -UseBasicParsing).StatusCode
-```
-
-Debe devolver **200**. Esto confirma que Java recibe y responde HTTP; el intercambio
-de imágenes/ACKs se observa por separado en el WebSocket de la sección 4.
-
-### Logs adicionales en la terminal del servidor
-
-El nivel de log normal no imprime cada tile ni cada ACK. Una terminal silenciosa
-después del arranque no significa que el servidor haya dejado de trabajar.
-
-Si quieres más información de HTTP y del ciclo de conexión WebSocket, detén Java
-con **Ctrl+C** y reinícialo así:
-
-```powershell
-java -jar ".build/server.jar" --images.demo-enabled=true --logging.level.org.springframework.web.servlet.DispatcherServlet=DEBUG --logging.level.org.springframework.web.socket=DEBUG
-```
-
-Repite una consulta HTTP o recarga el visor. Los logs de Spring ayudan a observar
-solicitudes y conexiones; la lista exacta de mensajes GTP/1 se consulta en DevTools.
-
-## 6. Pruebas cortas para ver que responde en tiempo real
-
-### A. Solicitar otra región
-
-Pulsa **→**. Deben cambiar las coordenadas/números y aparecer otra secuencia de
-solicitud, tiles, ACKs y finalización. Java está atendiendo una nueva región.
-
-### B. Observar recuperación de un ACK omitido
-
-1. Abre **Diagnóstico del protocolo**.
-2. Marca **Omitir un ACK (una sola vez por solicitud)**.
-3. Pulsa **Actualizar vista**.
-4. Busca `ACK omitido deliberadamente` en el panel.
-5. Espera la retransmisión: el mismo `transfer_id` aparece con `attempt: 2`.
-6. La solicitud debe terminar sin tiles fallidos. Desmarca la opción al terminar.
-
-El RTO inicial es de aproximadamente un segundo, aunque puede ajustarse con las
-mediciones de esa sesión. Esta prueba omite un ACK de aplicación deliberadamente;
-no necesita cortar Internet ni simula pérdida de paquetes TCP.
-
-### C. Comprobar recepción de un mensaje de memoria
-
-1. Selecciona **90%** en presión de memoria simulada.
-2. Pulsa **Enviar presión simulada**.
-3. En DevTools comprueba `memory_pressure` saliente y `adjust_strategy` entrante.
-4. El panel debe indicar **Ventana del receptor: 2**.
-5. Envía después **20%**: debe indicar **Ventana del receptor: 32**.
-
-El límite efectivo puede ser menor por `cwnd`. Estos porcentajes son controles de
-diagnóstico, no mediciones automáticas de la memoria real del navegador.
-
-### D. Comprobar dos clientes
-
-Abre **http://localhost:8081/** en otra pestaña. Cambia la región en una de ellas:
-la otra debe mantener su imagen. Cada conexión tiene su propia cola y ventana.
-
-## 7. Compilar si el JAR falta o cambiaste el código
-
-El JAR es una copia compilada: editar archivos fuente no cambia un servidor ya
-iniciado. Para aplicar cambios, detén Java, compila y vuelve a ejecutar el JAR.
-
-Si Maven está en PATH, desde la raíz del proyecto:
-
-```powershell
-mvn -version
-mvn "-Dgigapixel.buildDirectory=.build" package
-```
-
-`package` ejecuta también las pruebas. Espera **BUILD SUCCESS** antes de iniciar Java.
-
-En este equipo se preparó Maven 3.9.9 en una carpeta temporal porque `mvn` no estaba
-en PATH. Puedes utilizarlo mientras esa carpeta exista:
-
-```powershell
-Test-Path -LiteralPath "C:\Users\crist\AppData\Local\Temp\opencode\apache-maven-3.9.9\bin\mvn.cmd"
-& "C:\Users\crist\AppData\Local\Temp\opencode\apache-maven-3.9.9\bin\mvn.cmd" "-Dgigapixel.buildDirectory=.build" package
-```
-
-Si la comprobación de esa ruta devuelve `False`, instala Maven 3.9+ y usa el comando
-normal. La primera compilación puede descargar dependencias; ejecutar el JAR ya
-empaquetado y la demo local no necesita Internet.
-
-## 8. Problemas frecuentes
+## 6. Problemas frecuentes
 
 | Síntoma | Qué revisar |
 |---|---|
-| `java` no se reconoce | Instalar/configurar JDK 21 y abrir una terminal nueva |
-| `Unable to access jarfile` | Confirmar carpeta actual y existencia del JAR; compilar si falta |
-| Error de versión de clases | Revisar que `java -version` muestre Java 21 |
-| Puerto 8081 ocupado | Revisar si ya hay una instancia; detenerla desde su terminal o usar otro puerto |
-| `ERR_CONNECTION_REFUSED` | Confirmar que Java sigue activo y que el navegador usa el puerto anunciado al arrancar |
-| La página abre pero no aparecen imágenes | Revisar estado del visor, metadata y frames `/ws/tiles`; verificar que `demo_numeros` esté seleccionada |
-| No aparecen frames en DevTools | Abrir Network antes de recargar; seleccionar WS → `tiles` → Messages |
-| Estado `Desconectado` | Confirmar que Java esté activo y pulsar **Reconectar** |
-| Cambié código pero veo lo anterior | Volver a empaquetar, reiniciar el JAR y recargar la página sin caché |
-| No aparecen logs nuevos estando inactivo | Es normal; pulsa **Actualizar vista** o consulta `/api/images` para generar tráfico |
+| Java/Maven no disponibles o versión de clases incompatible | JDK 21, `JAVA_HOME`, `PATH` y la JVM que muestra Maven |
+| Falta el JAR o se ve una versión anterior | Compilar con éxito, reiniciar `.build/server.jar` y recargar sin caché |
+| Puerto ocupado / conexión rechazada | Instancia Java activa, puerto anunciado y URL; usar otro puerto si corresponde |
+| No aparecen frames | Abrir Network antes de recargar y seleccionar WS → tiles → Messages |
+| Catálogo desaparecido | Comprobar que `GTP_WORK` sea la misma ruta de la sesión anterior |
+| Cabecera válida pero sin preview | Límites 4 Mpx/16 MiB; la cabecera no valida el cuerpo PNG |
+| Registro duplicado o `pending` | Continuar el mismo ID con Transferir y preparar; registrar otro solo para otra imagen |
+| Error Adam7/16 bits/APNG | Variante no admitida por el decoder actual |
+| `failed` | Leer causa en `/status`: corrupción, disco, permisos, presupuesto o cancelación |
+| Otra ingesta activa | Hay un único procesamiento por work; esperar o cancelar al propietario |
+| `ready` pero sin canvas | Revisar conexión, selección, JAR actualizado y recursos sin caché |
 
-Para iniciar en otro puerto:
+## 7. Verificaciones automatizadas y cierre
 
-```powershell
-java -jar ".build/server.jar" --server.port=8082 --images.demo-enabled=true
+El build ya ejecuta pruebas Java. El smoke de ingesta requiere Node; el E2E de
+navegador requiere además Playwright y un navegador instalado:
+
+```text
+node scripts/verify-ingestion.cjs .build/server.jar
+node scripts/verify-browser.cjs .build/server.jar
 ```
 
-En ese caso usa **http://localhost:8082/** y cambia también el puerto en las consultas
-de PowerShell. El visor adapta su conexión WebSocket al puerto de la página.
+Configuración de herramientas, cobertura y resultados fechados:
+[verificación](docs/verificacion.md). Esos scripts levantan sus propios procesos
+temporales. Los conteos históricos no son una expectativa fija para futuros builds.
 
-## 9. Apagar y criterio de éxito de esta revisión
-
-En la Terminal 1 pulsa **Ctrl+C** y espera que vuelva el prompt. Puedes cerrar las
-pestañas o dejarlas abiertas y pulsar **Reconectar** cuando vuelvas a iniciar Java.
-
-La comprobación actual está conseguida si observas:
-
-- Java inicia y anuncia el puerto.
-- `/api/images` responde HTTP 200.
-- `request_accepted` demuestra recepción de la solicitud de tiles.
-- Los tiles se ven y `request_complete` confirma los ACKs sin fallos.
-- Al pedir otra región aparecen nuevos mensajes y cambia la imagen visible.
-
-La demo valida este flujo actual. Las pruebas con archivos gigantes y los demás
-hitos se retomarán después de esta revisión manual.
+Una comprobación manual completa incluye preparar un PNG hasta `ready`, navegarlo,
+observar ACK y recuperación, reiniciar con el mismo work y recuperar el registro.
+Para apagar, pulsa **Ctrl+C** en la terminal de Java. Al volver a arrancar, recarga
+el visor o pulsa **Reconectar**.

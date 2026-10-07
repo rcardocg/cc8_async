@@ -1,7 +1,11 @@
 # Propuesta de Protocolos
+
+Ubicación original: `docs/propuesta_original.md`. Trasladada al
+[archivo histórico](README.md) el 2026-10-07; se conservan propuesta y correcciones.
+
 > Archivo histórico de la propuesta inicial. Sus ejemplos y estados de aprobación no
-> describen lo implementado hoy. El contrato vigente está en [protocolo.md](protocolo.md)
-> y las correcciones por fase en [fases/README.md](fases/README.md).
+> describen lo implementado hoy. El contrato vigente está en [GTP/1](../protocolo.md)
+> y las correcciones por fase en las [bitácoras](../fases/README.md).
 ## Servidor de Imágenes Ultra Alta Resolución
 
 **Estudiantes:** Ricardo Caballeros / Cristian Sactic

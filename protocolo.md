@@ -7,7 +7,7 @@
 | Identificador local | GTP-001 |
 | Protocolo en el canal | `GTP/1`, `version: 1` |
 | Estado | Especificación de la implementación vigente, para revisión y defensa |
-| Fecha de revisión | 2026-10-06 |
+| Fecha de revisión documental | 2026-10-07 |
 | Implementación | Java 21 / Spring Boot 3.2.4; navegador con JavaScript y Canvas |
 
 ## Estado de este documento
@@ -18,9 +18,15 @@ Describe la solución implementada, su contrato, decisiones y evidencia disponib
 No afirma que la evaluación con originales de hasta 93 GB haya sido completada.
 
 El contrato operativo detallado está en [docs/protocolo.md](docs/protocolo.md).
+Este RFC mantiene la arquitectura, los algoritmos y sus razones; el contrato
+mantiene campos, validaciones y efectos observables de los mensajes. Las guías de
+uso remiten a ambos sin definir variantes del mismo protocolo.
+
 El diseño previo se conserva en
-[docs/diseno_protocolo_previo.md](docs/diseno_protocolo_previo.md) como referencia
-histórica, no como una segunda especificación vigente.
+[docs/historico/diseno_protocolo_previo.md](docs/historico/diseno_protocolo_previo.md).
+La [historia seccionada](docs/historico/README.md) relaciona decisiones anteriores,
+cambios y evidencias. La reorganización documental del 2026-10-07 no cambia el
+protocolo ni representa una nueva ejecución de las pruebas registradas.
 
 ## Resumen
 
@@ -399,7 +405,8 @@ monotónico. En tile entero abarca entrega/consumo de ese envío; en modo fragme
 se mide desde el **último fragmento enviado** hasta `ack_tile`, no desde el inicio
 de todos los fragmentos. P7 mide por separado la duración completa.
 
-La implementación usa truncamiento entero en SRTT/RTTVAR:
+La implementación usa truncamiento entero en SRTT/RTTVAR; el valor cero de los
+estimadores indica que deben inicializarse con la muestra:
 
 ```text
 si RTT > max(200 ms, 2 × SRTT anterior):
@@ -515,7 +522,8 @@ sin esperar indefinidamente a que termine el movimiento. Flechas, +/−, ajustar
 al cambiar tamaño; una ampliada conserva escala y limita su centro a los bordes.
 
 El servidor también procesa `gesture` y devuelve sugerencias `quality_adjustment`:
-pan >800 px/s o FPS<30 → q0; pan >200 px/s → q1; |zoom_delta|>0,5 → q2; resto → q3.
+durante pan, velocidad >800 px/s o FPS<30 → q0; pan >200 px/s → q1;
+|zoom_delta|>0,5 → q2; resto → q3.
 **El visor actual no envía ese mensaje ni aplica esas sugerencias.** Tampoco
 `decrease_quality` recodifica automáticamente tiles ni `reduce_prefetch` crea un
 motor de prefetch. Son extensiones del servidor, no adaptación extremo a extremo.
@@ -538,6 +546,12 @@ motor de prefetch. Son extensiones del servidor, no adaptación extremo a extrem
 No se atribuye optimalidad a estas decisiones; se sustentan por su función y los
 casos verificados. Parámetros de ventana, TTL y umbrales son valores de diseño,
 no constantes universalmente óptimas.
+
+Las decisiones vigentes de esta tabla se distinguen de las propuestas descartadas
+y de los pasos intermedios en la [evolución de decisiones](docs/historico/README.md#evolución-de-decisiones).
+Por ejemplo, LRU describe la caché del incremento P4, mientras que LFU envejecida
+con TTL describe la implementación posterior: conservar ambas entradas fechadas
+explica el cambio, no establece dos políticas actuales.
 
 ## 13. Seguridad, interoperabilidad y límites
 

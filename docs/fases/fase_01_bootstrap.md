@@ -1,5 +1,7 @@
 # Fase 01 — Bootstrap HTTP y metadata
 
+**Bitácora histórica por fecha.** Contrato actual: [registro e ingesta](../ingesta_p3.md).
+
 ## 2026-10-02 · Implementación y resolución
 
 **Problemas:** `/api/images` devolvía nombres inventados; cualquier ID obtenía la
@@ -50,4 +52,5 @@ bloqueo de carga y retorno a la demo con GTP funcionando.
 Los registros permanecen pending hasta conectar una fuente e ingesta en P3.
 Persistencia de failed preparada; processing/ready de imágenes nuevas se validarán
 con salida real en P3. GTP v1 sigue plano; transporte z/q corresponde a P5.
-Pruebas manuales y contrato: [registro_p2.md](../registro_p2.md).
+Referencia de ese incremento: [registro P2 archivado](../historico/registro_p2.md).
+Contrato actual: [registro e ingesta](../ingesta_p3.md#registro-y-metadata-p2).

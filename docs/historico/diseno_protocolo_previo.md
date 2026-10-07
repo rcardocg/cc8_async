@@ -1,14 +1,18 @@
 # Protocolo GTP/1: especificación de protocolos y renderizado progresivo
 
+Ubicación original: `docs/diseno_protocolo_previo.md`. Archivado el 2026-10-07.
+Véase la [evolución de decisiones](README.md#evolución-de-decisiones) para distinguir
+las propuestas siguientes de los mecanismos finalmente implementados.
+
 > **Referencia histórica, conservada antes de redactar el RFC interno.** Este
 > documento mezcla objetivos y revisiones parciales; no es el contrato vigente
 > ni la especificación para entregar. El RFC de la solución implementada está en
-> [`../protocolo.md`](../protocolo.md) y el contrato operativo en
-> [`protocolo.md`](protocolo.md). Se conserva para revisar después qué material sobra.
+> [RFC interno GTP-001](../../protocolo.md) y el contrato operativo en
+> [GTP/1](../protocolo.md). Se conserva como evidencia del diseño previo.
 
 Ciencias de la Computación VIII. Proyecto Servidor Asíncrono.
 
-> Especificación objetivo anterior. El contrato implementado está en `protocolo.md`.
+> Especificación objetivo anterior. El contrato implementado está en [GTP/1](../protocolo.md).
 > Actualización PNG/portabilidad: originales exclusivamente PNG; raíces separadas
 > `GTP_IMAGES` y `GTP_WORK` en Linux y Windows. P2 registra metadata y espera el
 > original; P3 inicial ya transfiere/procesa PNG no entrelazados hasta 8 bits.

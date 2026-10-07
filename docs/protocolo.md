@@ -1,6 +1,6 @@
 # GTP/1 — Protocolo de control de transferencia de tiles
 
-Fecha: 2026-10-06. Este contrato describe el código implementado, no la propuesta
+Revisión documental: 2026-10-07. Este contrato describe el código implementado, no la propuesta
 histórica. GTP significa «Gigapixel Tile Protocol» dentro de este proyecto; no se
 presenta como estándar registrado.
 
@@ -8,6 +8,7 @@ presenta como estándar registrado.
 su contrato operativo de consulta: nombres exactos, unidades, validaciones y
 efectos sobre el estado. La arquitectura, justificación y evidencia se desarrollan
 en el RFC. No debe interpretarse el diseño histórico como otro contrato vigente.
+El [mapa documental](README.md) indica dónde se mantienen guías, pruebas e historia.
 
 ## Transporte y bootstrap
 
@@ -19,31 +20,15 @@ en el RFC. No debe interpretarse el diseño histórico como otro contrato vigent
 4. El cliente abre `/ws/tiles` en el mismo origen (`ws` o `wss`).
 5. El servidor responde `ready` con versión y límites; entonces se aceptan solicitudes.
 
-P1 añade `POST /api/png/inspect?name=archivo.png&sizeBytes=N&tileSize=256` para
-selección local desde el cliente. Cuerpo `application/octet-stream` de exactamente
-33 bytes (firma/IHDR/CRC); respuesta JSON con dimensiones y estimaciones. HTTP
-400 ante cabecera/parámetros inválidos; 413 si el cuerpo excede el límite. El
-tamaño del archivo es declarado por el cliente, no verificado contra un original
-almacenado. La respuesta no se cachea. Este endpoint no ingiere archivos, no
-modifica el catálogo y no inicia transferencias GTP. La vista previa local de PNG
-pequeños tampoco usa WebSocket. Procedimiento en [pruebas_png_p1.md](pruebas_png_p1.md).
+Antes de navegar un original, HTTP permite inspeccionarlo, registrarlo y preparar
+su pirámide. La [API de inspección](imagenes.md#api-de-inspección-desde-el-navegador)
+recibe una cabecera; el [contrato de registro e ingesta](ingesta_p3.md) define
+subida, estados, persistencia y errores HTTP. Un registro pendiente no sirve tiles.
+Subir el original **hacia Java** y recibir tiles **en el visor** son recorridos
+distintos. Tampoco la preview local de un PNG pequeño utiliza GTP.
 
-P2 añade `POST /api/images` con cabecera binaria de 33 bytes y parámetros
-`imageId`, `name`, `sizeBytes`, `tileSize`. Devuelve HTTP 202, metadata pendiente
-y `Location` del estado. Duplicados/reservados: 409; parámetros/cabecera inválidos:
-400; cuerpo excesivo: 413. Persiste `meta.json` sin transferir el original completo.
-`GET /api/image/{id}/status` devuelve progreso y `sourceState`. Un registro pendiente
-no puede solicitar tiles. Contrato y pruebas en [registro_p2.md](registro_p2.md).
-
-P3 añade transferencia del original **hacia Java**, distinta de la entrega de tiles
-al visor: `GET/PUT/DELETE /api/image/{id}/upload`, bloques de hasta 1 MiB y offset
-persistido; `POST /api/image/{id}/ingest` (202) y `/ingest/cancel`. La fuente puede
-ser la copia subida o un nombre relativo a `GTP_IMAGES`. Procesa PNG no Adam7 de
-hasta 8 bits, genera pirámides en disco y publica `ready` tras éxito completo.
-Contrato, errores y reintentos: [ingesta_p3.md](ingesta_p3.md).
-Las imágenes P3 `ready` admiten solicitudes multinivel con `z` y `q`; el visor
-solicita PNG q3 del nivel elegido según zoom/densidad de pantalla. Véase
-[renderizado_p5.md](renderizado_p5.md) para pruebas y límites del primer incremento.
+Las imágenes multinivel `ready` admiten `z` y `q`; el visor solicita q3 del nivel
+elegido según zoom/densidad de pantalla. Interacción y pruebas: [visor](visor_p6.md).
 
 Mensajes JSON en frames de texto. Los clientes deben enviar `version: 1` y `action`;
 por compatibilidad el servidor asume versión 1 si el campo se omite.
@@ -282,15 +267,10 @@ mapa de transferencias sin ACK, bytes retenidos,
 solicitud activa, contadores de éxito/fallo, `cwnd`, `ssthresh`, RTT suavizado y RTO.
 
 - Inicio: `cwnd=2`, `ssthresh=16`, ventana del receptor=32, RTO=1000 ms.
-- ACK válido sin retransmisiones: si RTT > `max(200ms, 2*SRTT anterior)`, reducir
-  ventana; en otro caso, sumar 1 durante slow start o `1/cwnd` en avoidance.
-- `cwnd` máximo 32. El incremento fraccional evita el crecimiento excesivo del
-  prototipo antiguo. Es una adaptación a tiles, no conformidad con TCP.
-- Reducción: `ssthresh=max(2,cwnd/2)` y `cwnd=ssthresh`.
-- `SRTT = primer RTT`, después `0.875*SRTT + 0.125*RTT`.
-- `RTTVAR = primer RTT/2`, después `0.75*RTTVAR + 0.25*abs(SRTT anterior-RTT)`.
-- RTO base: `clamp(SRTT + 4*RTTVAR, 1000ms, 30000ms)`.
-  Se usa aritmética/truncamiento entero; el valor cero inicializa estimadores.
+- ACK válido sin retransmisiones: actualiza RTT/RTO y adapta `cwnd`, cuyo máximo
+  es 32. Las fórmulas, umbrales, truncamiento y razones se mantienen en el
+  [RFC, sección 8.2](../protocolo.md#82-ack-rtt-y-rto). Son adaptaciones a tiles,
+  no una implementación completa de TCP. RTO base entre 1000 y 30000 ms.
 - Tras retransmisión no se mide RTT ni se incrementa ventana con ese ACK (Karn).
 - El planificador revisa cada 250 ms. Sólo se retransmiten entradas vencidas sin ACK,
   con mismo `transfer_id` y bytes. Cada timeout duplica su intervalo, máximo 30 s.

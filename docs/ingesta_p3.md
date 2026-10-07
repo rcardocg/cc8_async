@@ -1,6 +1,8 @@
-# P3 — Ingesta PNG secuencial (primer incremento)
+# Registro e ingesta PNG — API, estados y almacenamiento
 
-Actualización documental: 2026-10-06. Código compartido Linux/Fedora y Windows,
+Actualización documental: 2026-10-07. Integra el contrato de registro P2 y la
+ingesta P3 para seguir el recorrido completo en una sola referencia.
+Código compartido Linux/Fedora y Windows,
 sin dependencias nuevas de producción. La revisión vigente pasó el build/E2E en
 Fedora; la evidencia histórica por plataforma está en [verificacion.md](verificacion.md).
 La solución completa se especifica en el [RFC interno GTP-001](../protocolo.md).
@@ -17,7 +19,20 @@ Los ensayos de los originales gigantes y la última revisión en Windows están 
   ImageIO ni acumular `ancho × alto`. ImageIO solo codifica/lee tiles acotados.
 - El progreso se persiste en `meta.json`; una pirámide terminada pasa a `ready`.
 - Admite cancelación, reintento desde el principio y reanudación de la **subida**.
-  Reanudar Deflate desde una fila intermedia sigue pendiente.
+   Reanudar Deflate desde una fila intermedia sigue pendiente.
+
+### Por qué se separan inspección, registro e ingesta
+
+La inspección permite estimar el trabajo leyendo solo la cabecera; el registro
+asigna una identidad persistente aunque el original aún esté en el navegador.
+La ingesta valida el archivo completo y prepara acceso por regiones: PNG/Deflate
+es secuencial, de modo que navegar tiles no puede resolverse saltando a un offset
+arbitrario del original. Esta separación permite informar errores y reanudar la
+subida sin anunciar como utilizable una pirámide incompleta.
+
+El algoritmo y sus alternativas están en el
+[RFC, sección 4](../protocolo.md#4-recepción-y-procesamiento-del-original).
+Esta guía mantiene el contrato HTTP, la persistencia y los procedimientos.
 
 ### Variantes admitidas
 
@@ -34,6 +49,71 @@ disponibles; no se realiza conversión silenciosa de 16 a 8 bits. APNG se rechaz
 La salida nativa conserva los valores de píxel admitidos, no el archivo ni sus chunks
 auxiliares: perfiles ICC/gamma/texto no se propagan. La fidelidad de gestión de color
 y legibilidad con los originales del curso requiere evaluación específica.
+
+## Registro y metadata (P2)
+
+### API de registro
+
+| Método y ruta | Resultado normal |
+|---|---|
+| `POST /api/images?imageId=ID&name=archivo.png&sizeBytes=N&tileSize=256` | 202, metadata y `Location: /api/image/ID/status` |
+| `GET /api/images` | IDs del catálogo plano y registros; refresca manifests |
+| `GET /api/image/ID/metadata` | Dimensiones, estado y niveles previstos/completados |
+| `GET /api/image/ID/status` | Estado, progreso, origen y causa de fallo |
+
+El POST lleva `Content-Type: application/octet-stream` y exactamente 33 bytes
+(firma/IHDR/CRC). No acepta una ruta del navegador ni el PNG completo. Nombre y
+tamaño son declarados por el cliente; el original todavía no queda almacenado.
+El registro no inicia un decoder ni un trabajo en segundo plano.
+
+- ID: 1–64 caracteres ASCII, letras, números, `_` y `-`.
+- `demo_numeros` está reservado incluso si la demo está deshabilitada.
+- 400: parámetros/cabecera inválidos; 409: ID duplicado/reservado o directorio
+  existente; 413: cuerpo mayor de 33 bytes; 500: error de persistencia/refresco.
+- Consultar un ID desconocido devuelve 404.
+
+### Persistencia y compatibilidad
+
+Se guarda `<GTP_WORK>/<imageId>/meta.json` mediante temporal y rename atómico en
+el mismo directorio. El registro no sobrescribe directorios preexistentes ni
+genera originales o tiles. El manifest P2 (`schemaVersion=1`) conserva metadata,
+origen `browser_header`, nombre, tamaño declarado y cabecera Base64.
+
+Los manifests se validan al arrancar y al refrescar catálogo/estado. Las dimensiones
+y niveles se recalculan desde la cabecera; un manifest corrupto hace fallar el
+arranque o el refresco explícitamente. Refrescar no carga imágenes completas en RAM.
+
+| Campo al registrar | Valor / significado |
+|---|---|
+| `state`, `sourceState` | `pending`, `awaiting_transfer` |
+| `maxZoom`, `levels`, `totalTiles` | Pirámide prevista por `PyramidMath`; total suma todos los niveles, no archivos existentes |
+| `completedLevels`, `availableQualities` | Listas vacías: aún no hay salida publicada |
+| `processedTiles`, `currentLevel` | 0 y null |
+| `message`, `error` | Explicación de la espera; error vacío salvo fallo real |
+
+P2 permite persistir `failed`; `processing` y `ready` requieren el manifest de
+procesamiento P3 (`schemaVersion=2`). Para `ready` se exige además la publicación
+completa correspondiente. Un manifest v1 sigue rechazando esos dos estados.
+No hay endpoint para simular que una imagen ha terminado.
+
+El catálogo plano `catalog.json` conserva `maxZoom=null`, estado `ready` e identidad
+`imageId:x:y`; se carga al arrancar. Los registros `meta.json` se incorporan mediante
+refresco sin reiniciar. Su identidad de tile es `imageId:z:x:y:q`; las coordenadas
+se validan contra el nivel, incluidos bordes parciales. Una coordenada prevista
+válida no prueba disponibilidad: solo registros `ready` pueden servir tiles.
+Los campos GTP y la compatibilidad de z/q se definen en el [contrato](protocolo.md).
+
+### Comprobar el registro antes de procesar
+
+1. Elegir un PNG, registrar un ID nuevo y consultar metadata/estado.
+2. Comprobar `pending`, listas vacías y `meta.json` sin tiles; la carga del visor
+   está deshabilitada hasta `ready`.
+3. Repetir el ID: debe rechazarse sin alterar su manifest.
+4. Reiniciar con el mismo work: el registro debe seguir presente.
+5. Volver a `demo_numeros`: el recorrido GTP de diagnóstico debe seguir disponible.
+
+La ejecución P2 original y sus límites se conservan en la
+[bitácora de bootstrap](fases/fase_01_bootstrap.md#2026-10-05--p2-registro-persistente-y-metadata-multinivel).
 
 ## Uso desde el navegador (igual en ambos sistemas)
 
@@ -196,7 +276,7 @@ node scripts/verify-browser.cjs .build/server.jar
 Usar la ruta real del navegador en Fedora; también se admite `BROWSER_CHANNEL=chrome`.
 No se instala ninguna herramienta ni dependencia al arrancar la aplicación.
 
-## Pendientes para cerrar P3
+## Límites pendientes de evaluación
 
 Inventariar/procesar originales del curso; repetir la revisión vigente en Windows;
 medir RSS, disco máximo y rendimiento en ambos equipos; verificar lectura de originales

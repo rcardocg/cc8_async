@@ -1,5 +1,8 @@
 # Fase 04 — Transferencia de tiles reales
 
+**Bitácora histórica por fecha.** Referencias actuales: [ingesta](../ingesta_p3.md)
+y [contrato GTP/1](../protocolo.md). El límite de 512 KiB pertenece a la base inicial.
+
 ## 2026-10-02 · Implementación y resolución
 
 **Problemas:** el payload era `base64_aqui...`, el ID sólo incluía X/Y, y la solicitud
@@ -51,3 +54,17 @@ los comandos Fedora/Windows. P3 nuevo pendiente de ejecución en Fedora, dataset
 curso, RSS/disco y fidelidad visual. Rechazo explícito de Adam7/16 bits. La subida se
 reanuda por offset; el decoder se reintenta desde cero. P4/P5/P6 siguen pendientes;
 generar una pirámide no habilita aún su navegación GTP multinivel.
+
+## 2026-10-06 · Continuación P5 — registro recopilado el 2026-10-07
+
+**Cambio registrado:** pirámides `ready` integradas con transporte z/q y canvas;
+máximo de tile codificado ampliado a 2 MiB para tiles de 512 px poco compresibles.
+Payloads retenidos por sesión y reconstrucción cliente permanecen acotados a
+4 MiB en cada ámbito; el presupuesto RGBA se calcula por dimensiones reales.
+
+**Motivo:** permitir detalle nativo sin hacer depender la resolución de la ventana
+de transferencia. La fragmentación divide bytes del tile, no recodifica sus píxeles.
+
+**Evidencia original:** [P5/P6](../historico/renderizado_p5.md#evidencia-ejecutada)
+y [P7](../experimentos_p7.md). Sus resultados sintéticos/locales no acreditan la
+escalera completa de originales gigantes.

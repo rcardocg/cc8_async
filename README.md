@@ -1,154 +1,84 @@
 # Servidor asíncrono de imágenes — CC8
 
-Servidor Java 21 / Spring Boot 3.2.4 para explorar regiones de imágenes mediante
-HTTP inicial y un protocolo propio de control de tiles sobre WebSocket (**GTP/1**).
+Servidor Java 21 / Spring Boot 3.2.4 para preparar imágenes PNG y explorar sus
+regiones mediante un protocolo propio sobre WebSocket: **GTP/1**.
 Autores registrados en la propuesta original: Ricardo Caballeros y Cristian Sactic.
 
-## Estado actual
+## Qué hace
 
-Hay una base funcional y verificable: catálogo real, frontend servido desde Java,
-tiles PNG/JPEG, estado independiente por cliente, ACKs de aplicación, ventana
-limitada, retransmisión selectiva por timeout y cancelación de regiones antiguas.
+El usuario elige un PNG, registra su cabecera y transfiere el original por bloques.
+Java lo procesa secuencialmente y genera una pirámide de tiles en disco. El visor
+solicita únicamente el nivel y la región necesarios: vista general al ajustar y
+detalle nativo en 1:1, con pan, zoom y un respaldo reducido que permanece disponible.
 
-El visor actual usa coordenadas **X/Y a resolución nativa** y carga hasta 12 tiles
-por región para catálogo plano/demo. Las imágenes P3 procesadas tienen **canvas con
-pan, zoom al cursor, ajustar imagen y 1:1**, seleccionando tiles visibles del nivel
-necesario. La demo `demo_numeros` genera únicamente el tile solicitado. También
-se admiten imágenes previamente divididas en tiles mediante un catálogo local.
-**La demo no constituye una prueba con la imagen de 24 GB.**
+GTP/1 añade estado independiente por cliente, ACK después de decodificar, ventanas
+y presupuestos de memoria, reintentos por timeout, fragmentación opcional y
+cancelación de trabajo obsoleto. **Los ACK son de aplicación:** WebSocket ya usa
+TCP y GTP no sustituye su recuperación de paquetes.
 
-Los originales de evaluación son **PNG**. P1 permite elegirlos desde el explorador
-del cliente, sin escribir rutas ni moverlos al proyecto, e inspeccionar su cabecera
-para estimar tiles, RAM y disco. Solo se envían 33 bytes; los pequeños tienen vista
-previa local con zoom. También existe CLI sin arrancar el servidor.
-P3 incorpora un preprocesador PNG secuencial; P5/P6 añade un primer visor multinivel.
-La caché del servidor usa **LFU con envejecimiento + TTL**, sin LRU/FIFO.
-Contrato, plan de ataque y pruebas: [docs/renderizado_p5.md](docs/renderizado_p5.md).
-P6 integra apertura/preparación/exploración y conserva el nivel 0 como respaldo;
-se elimina la sección pública de tiles de laboratorio. Interacción y pruebas:
-[docs/visor_p6.md](docs/visor_p6.md). P7 añade un benchmark de ventanas, recuperación,
-cancelación, memoria y hashes: [docs/experimentos_p7.md](docs/experimentos_p7.md).
-Pruebas del CLI: [docs/pruebas_png_p1.md](docs/pruebas_png_p1.md).
-
-P2 añade **Registrar imagen** desde el cliente, persistencia en `meta.json`,
-metadata multinivel prevista y consulta de estado. Los registros pendientes
-aparecen en catálogo, pero no se cargan como tiles. Pruebas y contrato:
-[docs/registro_p2.md](docs/registro_p2.md).
-
-P3 añade **Transferir y preparar imagen**, subida reanudable en bloques de 1 MiB, ingesta
-desde originales del servidor/CLI y pirámides reales con memoria acotada. Soporta
-PNG no entrelazados de hasta 8 bits; 16 bits y Adam7 se rechazan explícitamente.
-Los registros pasan a `ready` solo después de validar y generar la pirámide completa.
-Guías para **Linux y Windows**, API y límites: [docs/ingesta_p3.md](docs/ingesta_p3.md).
+Se admiten PNG no entrelazados de hasta 8 bits; 16 bits, Adam7 y APNG se rechazan.
+El visor pide q3 del nivel seleccionado. El servidor puede generar q0–q2, pero la
+adaptación automática de calidad y el prefetch siguen pendientes. La caché del
+servidor utiliza LFU con envejecimiento y TTL.
 
 ## Ejecutar
 
-Para iniciar paso a paso y observar solicitudes en vivo, consulta
-[GUIA_INICIO_Y_PRUEBAS.md](GUIA_INICIO_Y_PRUEBAS.md).
+Para compilar: **JDK 21 y Maven 3.9+** en `PATH`.
 
-Requisitos de desarrollo: **JDK 21 y Maven 3.9+** disponibles en `PATH`.
+Windows / PowerShell:
 
 ```powershell
 .\scripts\build.cmd
 .\scripts\gtp.cmd
 ```
 
-Abrir **http://localhost:8081/**. Todos los recursos del cliente se sirven desde
-el servidor Java; no hay dependencias de CDN ni llamadas a servicios externos.
-El JAR empaquetado incluye sus dependencias para ejecución sin Internet. La
-primera compilación necesita las dependencias Maven descargadas.
+Fedora / Bash:
 
-Opciones de arranque:
-
-```powershell
-java -jar .build/server.jar --server.port=8082 --images.originals-directory="D:/imagenes/originales" --images.directory="D:/imagenes/tiles" --images.demo-enabled=false
+```bash
+bash scripts/build.sh
+bash scripts/gtp.sh
 ```
 
-Para generar artefactos en una carpeta alternativa:
+Abrir **http://localhost:8081/**. Los lanzadores generan y ejecutan
+`.build/server.jar`. Java sirve también el frontend; el JAR incluye dependencias
+y recursos locales. La primera compilación necesita las dependencias Maven.
 
-```powershell
-mvn "-Dgigapixel.buildDirectory=.build" test package
-```
+- [Guía de uso y diagnóstico](GUIA_INICIO_Y_PRUEBAS.md): preparación, carga de PNG,
+  navegación, DevTools, recuperación y problemas frecuentes en ambos sistemas.
+- [Configuración y almacenamiento](docs/imagenes.md): `GTP_IMAGES`, `GTP_WORK`,
+  puerto, presupuestos y catálogo de tiles preprocesados.
 
-También se puede compilar y arrancar con `bash scripts/build.sh` y
-`bash scripts/gtp.sh` en Fedora, o `scripts\build.cmd` y `scripts\gtp.cmd` en
-Windows. Generan y ejecutan `.build/server.jar` desde la raíz del proyecto.
-`GTP_IMAGES` configura originales, `GTP_WORK` catálogo/tiles y `GTP_PORT` el puerto.
-Consulta [docs/imagenes.md](docs/imagenes.md) para las rutas y configuración local.
+## Documentación técnica
 
-## Probar desde el navegador
+| Necesidad | Documento principal |
+|---|---|
+| Entender la solución, sus algoritmos y por qué se implementó así | [RFC interno GTP-001](protocolo.md) |
+| Consultar mensajes, campos y reglas de intercambio | [Contrato GTP/1](docs/protocolo.md) |
+| Registrar, subir y procesar un original; consultar estados y errores HTTP | [Registro e ingesta](docs/ingesta_p3.md) |
+| Reproducir pruebas y conocer su alcance | [Verificación](docs/verificacion.md) y [experimentos P7](docs/experimentos_p7.md) |
+| Encontrar todas las guías y su función | [Mapa de documentación](docs/README.md) |
+| Consultar cambios, propuestas y resultados anteriores | [Historia del proyecto](docs/historico/README.md) |
 
-Para pruebas P1, usar **Elegir archivo PNG** en la sección superior, revisar las estimaciones
-y descargar el informe JSON. La vista previa de archivos pequeños es local.
-**Transferir y preparar imagen** genera tiles; cuando están `ready`, seleccionarlos muestra el canvas multinivel.
-Para navegar, usar **Tu imagen**. Los controles de protocolo y demo están en **Diagnóstico del protocolo**:
+GTP-001 es un RFC **interno**, no una publicación IETF. El RFC explica decisiones;
+el contrato detalla el intercambio; las bitácoras conservan la evolución fechada.
 
-1. Seleccionar una imagen y una región, o usar las flechas de navegación.
-2. Abrir otra pestaña: cada cliente debe conservar sus propios tiles y ventana.
-3. En **Diagnóstico del protocolo**, activar «Omitir un ACK» y cargar otra región.
-   El servidor retransmite sólo el tile pendiente; el cliente confirma el duplicado.
-4. Simular 90% de presión de memoria: la ventana del receptor baja a dos tiles.
-5. Cambiar rápidamente de región, cancelar o reconectar: las respuestas antiguas
-    no deben reemplazar la región actual.
-6. En una imagen procesada, enfocar el canvas y usar flechas, +/−, 0 (ajustar) y
-   1 (nativo); esperar el TTL y comprobar que el respaldo permanece disponible.
+## Alcance de la evidencia y pendientes
 
-El panel muestra RTT **de aplicación**, incluyendo transferencia y decodificación;
-no utiliza números aleatorios como medición de red. El selector de memoria está
-etiquetado como **simulación**, no como lectura real del heap del navegador.
+La última ejecución documentada registra 77 casos Java aprobados y E2E Chromium
+en Fedora. P7 conserva 18 ensayos iniciales con una imagen local de 4193×4193 y un
+PNG sintético de 3073×1537. Los detalles y resultados anteriores por plataforma
+están en [verificación](docs/verificacion.md); estas cifras no representan una
+nueva ejecución de pruebas al reorganizar la documentación.
 
-Prueba opcional E2E con Node.js, Playwright y Edge instalado:
+Falta evaluar originales gigantes, legibilidad de números, RSS/disco y múltiples
+clientes, y repetir la última revisión en Windows y en el entorno sin Internet.
+La demo `demo_numeros` permite comprobar el protocolo, pero no acredita el
+procesamiento del original de 24 GB ni de los archivos de evaluación de hasta 93 GB.
 
-```powershell
-# Instalar Playwright en un directorio de herramientas y exponer su node_modules
-# mediante NODE_PATH, o usar una instalación existente.
-node scripts/verify-browser.cjs .build/server.jar
-```
+Fuentes de evaluación: [enunciado](Proyecto_Servidor_Asi_ncrono.pdf) y
+[referencia visual](image_Indicators.pdf). La indicación posterior comunicada
+prioriza 40% funcionamiento/usabilidad y 60% protocolo; los tamaños de 17, 28, 55 y
+93 GB corresponden a máximos de 20, 40, 80 y 115 puntos. Tener tiles y zoom por sí
+solo no demuestra control de flujo ni recuperación.
 
-El script arranca su propio servidor en un puerto libre y lo detiene al terminar.
-`BROWSER_CHANNEL=chrome` permite usar Chrome en lugar de Edge.
-En Fedora, `BROWSER_EXECUTABLE_PATH` permite indicar Chromium instalado.
-Smoke P3 sin Playwright: `node scripts/verify-ingestion.cjs .build/server.jar`
-(PNG sintético íntegro, heap de 64 MiB, reinicio real de Java).
-
-## Agregar imágenes preprocesadas
-
-Consultar [docs/imagenes.md](docs/imagenes.md). No se abre ni se envía la imagen
-completa; el servidor lee un archivo por tile y limita el tamaño de cada uno.
-El catálogo se valida al iniciar; para agregar entradas se actualiza y se reinicia.
-
-## Documentación y bitácoras
-
-- **[RFC interno GTP-001 — solución implementada](protocolo.md):** documento
-  principal para evaluación; arquitectura, contrato, algoritmos, decisiones y evidencia.
-- [Contrato de protocolo GTP/1](docs/protocolo.md).
-- [Índice de implementación y resolución por fase](docs/fases/README.md).
-- [Resultados y procedimientos de verificación](docs/verificacion.md).
-- [Propuesta original, conservada como referencia](docs/propuesta_original.md).
-- [Diseño de protocolo previo](docs/diseno_protocolo_previo.md): referencia
-  histórica, conservada para revisar después; no es otro contrato vigente.
-- `bitacora_fase1.md`: registro histórico de septiembre, con aclaración de su alcance.
-
-El identificador GTP-001 es interno: no se afirma publicación IETF ni conformidad
-completa con TCP. Leer primero el RFC, después contrato/guías para campos y reproducción.
-
-## Requisitos de evaluación y trabajo pendiente
-
-Fuentes: `Proyecto_Servidor_Asi_ncrono.pdf` e `image_Indicators.pdf`. La indicación
-posterior enfatiza **40% funcionamiento/usabilidad y 60% protocolo**, con recuperación
-y control de flujo/congestión demostrables. Tener niveles o tiles por sí solo no
-cumple el objetivo. La imagen de 24 GB es una base para comenzar las pruebas reales;
-las imágenes indicadas de 17, 28, 55 y 93 GB tienen máximos de 20, 40, 80 y 115 puntos.
-
-Pendiente para la solución completa:
-
-- Validar el preprocesador con originales gigantes del curso y ampliar variantes PNG según su inventario.
-- Validación extendida del visor multinivel, navegación y legibilidad con los originales reales.
-- Predicción/prefetch y selección adaptativa de calidad medidas y justificadas;
-  el visor multinivel solicita PNG q3 del nivel elegido para conservar detalle.
-- Telemetría automática de recursos del cliente y ensayos con los archivos reales.
-- Validación de legibilidad de números, consumo de RAM, bytes transferidos, latencia
-  y múltiples clientes en el entorno de evaluación sin Internet.
-
-Los ACKs aquí confirman consumo del tile por la aplicación. WebSocket ya usa TCP:
-GTP/1 no implementa TCP ni sustituye su recuperación de paquetes.
+Los pendientes técnicos se centralizan en el [RFC, sección 15](protocolo.md#15-pendientes-y-referencias).

@@ -1,5 +1,8 @@
 # Fase 00 — Entorno y trazabilidad
 
+**Bitácora histórica por fecha.** Los límites de una entrada corresponden a ese
+corte. Referencias actuales: [configuración](../imagenes.md) y [mapa documental](../README.md).
+
 ## 2026-10-02 · Implementación y resolución
 
 **Problemas:** Maven apuntaba a Java 17 aunque el enunciado requiere 20 o 21;
@@ -146,3 +149,44 @@ análisis de sintaxis y `gtp.sh cli help` correctos, sin atribuirlo a Fedora.
 **Límites:** repetir las nuevas pruebas en Fedora y completar matriz de permisos/recursos
 con originales reales. Evidencia previa Fedora preservada. Procedimientos/resultados
 en [verificacion.md](../verificacion.md) e [ingesta_p3.md](../ingesta_p3.md).
+
+## 2026-10-07 · Consolidación documental
+
+**Objetivo:** hacer legibles uso, funcionamiento y razones de implementación,
+protegiendo el RFC, el contrato y los registros de modificaciones.
+
+**Necesidad:** dos guías repetían arranque/uso, varias notas redefinían mensajes y
+estado actual, y la guía P1 aún afirmaba que no existía ingesta real. Los archivos
+históricos estaban repartidos junto a las referencias vigentes.
+
+**Cambio y motivo:**
+- Guía de uso común para Windows/Fedora, con diagnóstico HTTP/WS; la ruta de la
+  antigua guía Windows conserva un enlace al documento consolidado.
+- Registro P2 integrado en `docs/ingesta_p3.md`; `docs/registro_p2.md` queda como
+  acceso a la referencia actual y a la revisión archivada.
+- RFC conserva algoritmos y justificaciones; contrato GTP mantiene campos y reglas
+  del canal. Configuración, calidades y visor remiten a esas fuentes.
+- Corregidas expectativas P1 contra `GtpCli` y su suite existente: ingesta real con
+  ID y distinción entre indicador de cabecera y validación del archivo completo.
+- Separados procedimientos actuales de resultados fechados en verificación.
+- Corregido el comentario de configuración que enlazaba una guía inexistente.
+
+| Ubicación anterior | Destino / contenido preservado |
+|---|---|
+| `bitacora_fase1.md` | `docs/historico/bitacora_fase1.md` |
+| `docs/propuesta_original.md` | `docs/historico/propuesta_original.md` |
+| `docs/diseno_protocolo_previo.md` | `docs/historico/diseno_protocolo_previo.md` |
+| `plan-temp.html` | `docs/historico/plan-temp.html` |
+| `docs/renderizado_p5.md` | `docs/historico/renderizado_p5.md`; pruebas de uso enlazadas desde guías actuales |
+| Revisión extensa `docs/registro_p2.md` | `docs/historico/registro_p2.md`; contrato integrado en ingesta |
+| Entradas fechadas de `docs/verificacion.md` | `docs/historico/verificaciones.md` |
+
+**Verificación documental:** comprobación automatizada de 29 documentos, 235 enlaces
+locales y 70 referencias a secciones, sin destinos ni anclas faltantes; enlaces
+externos fuera del alcance de esa comprobación. `git diff --check` sin errores
+de whitespace. Revisión del diff de RFC/contrato y configuración: las propiedades
+de ejecución conservan sus valores. No se ejecutó nuevamente Java/E2E.
+
+**Límites:** los cambios son documentales (y un comentario de configuración).
+Los resultados anteriores se conservan con su fecha; las pruebas con originales
+gigantes y la repetición de la última implementación en Windows siguen pendientes.

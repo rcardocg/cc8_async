@@ -1,4 +1,9 @@
-# P1: pruebas con PNG reales
+# Inspección PNG (P1) — pruebas manuales e inventario
+
+Revisión documental: **2026-10-07**. Casos de inspección para la implementación
+actual. La ingesta real ya existe; aquí se comprueba la etapa previa sin procesar
+el original. Comandos y campos del CLI: [configuración e inspección](imagenes.md#cli-para-inventario-y-preflight).
+Registro y procesamiento: [ingesta](ingesta_p3.md).
 
 ## Desde la interfaz: elegir archivos sin escribir rutas
 
@@ -6,7 +11,7 @@
 2. Ejecutar `bash scripts/gtp.sh` o `.\scripts\gtp.cmd` y abrir
    **http://localhost:8081/**.
 3. Pulsar **Elegir PNG** y abrir tu PNG pequeño desde cualquier carpeta.
-   Debe aparecer **Cabecera válida**, dimensiones, color y estimaciones.
+    Debe aparecer **Cabecera válida**, dimensiones, color y estimaciones.
 4. Si tiene hasta 4 megapíxeles y 16 MiB, aparece la vista previa local. Probar
    **Ajustar**, **1:1**, **+ / −** y arrastrar para desplazarse con zoom.
 5. Cambiar tamaño de tile entre 256 y 512: debe recalcular niveles y total de tiles.
@@ -21,13 +26,13 @@
    **33 bytes** (cabecera binaria). No debe haber un upload completo ni un GET del
    original. El tamaño HTTP total será mayor por URL/cabeceras; no confundirlo con
    el tamaño del cuerpo.
-10. En la sección inferior, probar la demo: cargar región, omitir ACK, simular memoria,
+10. En **Diagnóstico del protocolo**, probar la demo: cargar región, omitir ACK, simular memoria,
     cancelar y reconectar. Esa sección verifica GTP; la vista previa local no.
 
 El navegador no entrega a Java la ruta del archivo seleccionado. La inspección
 funciona incluso si el archivo está en una máquina distinta del servidor. El
-preprocesado real requerirá integrar una transferencia/lectura por bloques; P1
-no copia originales ni escribe tiles.
+preprocesado real utiliza la transferencia/lectura por bloques de P3; la operación
+de inspección P1 no copia originales ni escribe tiles.
 
 Prueba automatizada de navegador (herramientas de desarrollo opcionales):
 
@@ -85,7 +90,11 @@ Comprobar:
 - `pyramid.maxZoom` es 0 cuando ambos lados son ≤256; no es negativo.
 - El último nivel tiene dimensiones originales y sus columnas/filas son redondeadas
   hacia arriba; un borde parcial también ocupa un tile.
-- `validation` avisa que solo se verificó firma/IHDR/CRC; `ingestionImplemented` es false.
+- `validation` avisa que solo se verificó firma/IHDR/CRC. En el informe de
+  `ingest --dry-run`, `ingestionImplemented` es true para cabeceras no Adam7 de
+  profundidad distinta de 16 bits, y false para esas variantes no admitidas.
+  Este indicador de cabecera no valida IDAT/IEND ni detecta por sí solo APNG;
+  el decoder aún puede rechazar el archivo completo.
 - No se crean tiles ni carpetas de work inexistentes. La memoria se mantiene baja.
 - `preflight_ok` solo aprueba estimaciones; no significa que la imagen ya se pueda
   visualizar en el servidor. No agregar el original al catálogo plano de tiles.
@@ -119,7 +128,7 @@ En cada imagen revisar:
 - `estimatedWorkBytes` frente a `usableBytes`. Es una estimación sin ratio de
   compresión, no una garantía del uso real de disco.
 - Adam7 devuelve `interlace_review`; filas excesivas devuelven `memory_review`.
-  Esos resultados sirven para elegir el decoder; no intentar forzar una ingesta.
+  Esos resultados indican límites del decoder actual; no intentar forzar una ingesta.
 
 Comparar tile-size 256 y 512 para el archivo mayor:
 
@@ -134,7 +143,9 @@ Debe bajar el número de archivos estimado. No cambia el original ni procesa til
 - Ruta inexistente: salida 1 y error JSON en stderr.
 - Un archivo de texto de prueba renombrado `.png`: rechazo por cabecera/firma.
 - `--tile-size 0`: error de rango.
-- `ingest` sin `--dry-run`: rechazo porque aún no hay ingesta.
+- `ingest` sin `--dry-run` y sin `--image-id`: rechazo por falta de ID.
+  Con ID y preflight adecuado ejecuta ingesta real; no usar esa variante en una
+  comprobación que deba garantizar ausencia de escrituras.
 - Un PNG pequeño con `--max-memory-mib 1`: `memory_review`, salida 1.
 - `--work` apuntando a la carpeta que contiene el original: rechazo para impedir
   que quede dentro de la zona descartable.
@@ -145,5 +156,6 @@ No hace falta modificar ni truncar las imágenes reales para estas pruebas.
 
 Enviar `p1-escalera.json` y el resultado de `ingest --dry-run --pretty` del PNG
 más pequeño y del primero grande. Incluir SO, RAM disponible y espacio libre del
-disco de work. Con esos datos se puede implementar y medir el preprocesador
-secuencial antes de incorporar pan/zoom al visor.
+disco de work. Con esos datos se eligen originales compatibles para medir el
+preprocesador y el visor ya implementados, avanzando de pequeño a grande. Los
+resultados de inspección no acreditan ingesta ni legibilidad a tamaño completo.
