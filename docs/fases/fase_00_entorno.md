@@ -120,9 +120,9 @@ sin cambios. E2E con Playwright y Chromium de Fedora aprobado: selector PNG,
 errores y pruebas GTP existentes de dos clientes/recuperación/memoria/cancelación.
 Herramientas de navegador instaladas solo en `/tmp/opencode`, fuera del proyecto.
 
-**Límites:** abrir un original no entrega su ruta ni contenido a Java; el tamaño
-HTTP es declarado por el navegador. La integración de lectura/transferencia por
-bloques, ingesta y visor multinivel de originales grandes sigue pendiente.
+**Límites de este corte P1:** abrir un original no entrega su ruta ni contenido a
+Java; el tamaño HTTP es declarado por el navegador. En esta fecha, la integración
+de bloques, ingesta y visor multinivel seguía pendiente; P3–P6 la añadieron después.
 
 ## 2026-10-05 · Reproducción Windows y continuidad Fedora
 

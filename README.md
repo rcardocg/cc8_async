@@ -11,7 +11,9 @@ tiles PNG/JPEG, estado independiente por cliente, ACKs de aplicación, ventana
 limitada, retransmisión selectiva por timeout y cancelación de regiones antiguas.
 
 El visor actual usa coordenadas **X/Y a resolución nativa** y carga hasta 12 tiles
-por región. La demo `demo_numeros` genera únicamente el tile solicitado. También
+por región para catálogo plano/demo. Las imágenes P3 procesadas tienen **canvas con
+pan, zoom al cursor, ajustar imagen y 1:1**, seleccionando tiles visibles del nivel
+necesario. La demo `demo_numeros` genera únicamente el tile solicitado. También
 se admiten imágenes previamente divididas en tiles mediante un catálogo local.
 **La demo no constituye una prueba con la imagen de 24 GB.**
 
@@ -19,8 +21,13 @@ Los originales de evaluación son **PNG**. P1 permite elegirlos desde el explora
 del cliente, sin escribir rutas ni moverlos al proyecto, e inspeccionar su cabecera
 para estimar tiles, RAM y disco. Solo se envían 33 bytes; los pequeños tienen vista
 previa local con zoom. También existe CLI sin arrancar el servidor.
-P3 incorpora un primer preprocesador PNG secuencial; el visor con pan/zoom multinivel
-sigue pendiente de P5/P6.
+P3 incorpora un preprocesador PNG secuencial; P5/P6 añade un primer visor multinivel.
+La caché del servidor usa **LFU con envejecimiento + TTL**, sin LRU/FIFO.
+Contrato, plan de ataque y pruebas: [docs/renderizado_p5.md](docs/renderizado_p5.md).
+P6 integra apertura/preparación/exploración y conserva el nivel 0 como respaldo;
+se elimina la sección pública de tiles de laboratorio. Interacción y pruebas:
+[docs/visor_p6.md](docs/visor_p6.md). P7 añade un benchmark de ventanas, recuperación,
+cancelación, memoria y hashes: [docs/experimentos_p7.md](docs/experimentos_p7.md).
 Pruebas del CLI: [docs/pruebas_png_p1.md](docs/pruebas_png_p1.md).
 
 P2 añade **Registrar imagen** desde el cliente, persistencia en `meta.json`,
@@ -28,7 +35,7 @@ metadata multinivel prevista y consulta de estado. Los registros pendientes
 aparecen en catálogo, pero no se cargan como tiles. Pruebas y contrato:
 [docs/registro_p2.md](docs/registro_p2.md).
 
-P3 añade **Transferir / reanudar y procesar**, subida en bloques de 1 MiB, ingesta
+P3 añade **Transferir y preparar imagen**, subida reanudable en bloques de 1 MiB, ingesta
 desde originales del servidor/CLI y pirámides reales con memoria acotada. Soporta
 PNG no entrelazados de hasta 8 bits; 16 bits y Adam7 se rechazan explícitamente.
 Los registros pasan a `ready` solo después de validar y generar la pirámide completa.
@@ -71,10 +78,10 @@ Consulta [docs/imagenes.md](docs/imagenes.md) para las rutas y configuración lo
 
 ## Probar desde el navegador
 
-Para pruebas P1, usar **Elegir PNG** en la sección superior, revisar las estimaciones
+Para pruebas P1, usar **Elegir archivo PNG** en la sección superior, revisar las estimaciones
 y descargar el informe JSON. La vista previa de archivos pequeños es local.
-El botón P3 genera tiles; su visualización multinivel aún requiere P5/P6.
-Para probar la transferencia GTP, usar la sección **Visor de tiles preparados**:
+**Transferir y preparar imagen** genera tiles; cuando están `ready`, seleccionarlos muestra el canvas multinivel.
+Para navegar, usar **Tu imagen**. Los controles de protocolo y demo están en **Diagnóstico del protocolo**:
 
 1. Seleccionar una imagen y una región, o usar las flechas de navegación.
 2. Abrir otra pestaña: cada cliente debe conservar sus propios tiles y ventana.
@@ -82,7 +89,9 @@ Para probar la transferencia GTP, usar la sección **Visor de tiles preparados**
    El servidor retransmite sólo el tile pendiente; el cliente confirma el duplicado.
 4. Simular 90% de presión de memoria: la ventana del receptor baja a dos tiles.
 5. Cambiar rápidamente de región, cancelar o reconectar: las respuestas antiguas
-   no deben reemplazar la región actual.
+    no deben reemplazar la región actual.
+6. En una imagen procesada, enfocar el canvas y usar flechas, +/−, 0 (ajustar) y
+   1 (nativo); esperar el TTL y comprobar que el respaldo permanece disponible.
 
 El panel muestra RTT **de aplicación**, incluyendo transferencia y decodificación;
 no utiliza números aleatorios como medición de red. El selector de memoria está
@@ -110,11 +119,18 @@ El catálogo se valida al iniciar; para agregar entradas se actualiza y se reini
 
 ## Documentación y bitácoras
 
+- **[RFC interno GTP-001 — solución implementada](protocolo.md):** documento
+  principal para evaluación; arquitectura, contrato, algoritmos, decisiones y evidencia.
 - [Contrato de protocolo GTP/1](docs/protocolo.md).
 - [Índice de implementación y resolución por fase](docs/fases/README.md).
 - [Resultados y procedimientos de verificación](docs/verificacion.md).
 - [Propuesta original, conservada como referencia](docs/propuesta_original.md).
+- [Diseño de protocolo previo](docs/diseno_protocolo_previo.md): referencia
+  histórica, conservada para revisar después; no es otro contrato vigente.
 - `bitacora_fase1.md`: registro histórico de septiembre, con aclaración de su alcance.
+
+El identificador GTP-001 es interno: no se afirma publicación IETF ni conformidad
+completa con TCP. Leer primero el RFC, después contrato/guías para campos y reproducción.
 
 ## Requisitos de evaluación y trabajo pendiente
 
@@ -127,9 +143,9 @@ las imágenes indicadas de 17, 28, 55 y 93 GB tienen máximos de 20, 40, 80 y 11
 Pendiente para la solución completa:
 
 - Validar el preprocesador con originales gigantes del curso y ampliar variantes PNG según su inventario.
-- Niveles de resolución y selección de calidad por cliente; el protocolo actual
-  rechaza `z` distinto de `null` para no aparentar soporte inexistente.
-- Predicción/prefetch, caché LRU/LFU y compresión adaptativa medidos y justificados.
+- Validación extendida del visor multinivel, navegación y legibilidad con los originales reales.
+- Predicción/prefetch y selección adaptativa de calidad medidas y justificadas;
+  el visor multinivel solicita PNG q3 del nivel elegido para conservar detalle.
 - Telemetría automática de recursos del cliente y ensayos con los archivos reales.
 - Validación de legibilidad de números, consumo de RAM, bytes transferidos, latencia
   y múltiples clientes en el entorno de evaluación sin Internet.

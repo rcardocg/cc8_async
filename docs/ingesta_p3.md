@@ -1,8 +1,10 @@
 # P3 — Ingesta PNG secuencial (primer incremento)
 
-Actualización: 2026-10-05. Código compartido para Linux/Fedora y Windows; no incorpora
-dependencias de producción. Evidencia nueva ejecutada en Windows en
-[verificacion.md](verificacion.md). La repetición de este incremento en Fedora está pendiente.
+Actualización documental: 2026-10-06. Código compartido Linux/Fedora y Windows,
+sin dependencias nuevas de producción. La revisión vigente pasó el build/E2E en
+Fedora; la evidencia histórica por plataforma está en [verificacion.md](verificacion.md).
+La solución completa se especifica en el [RFC interno GTP-001](../protocolo.md).
+Los ensayos de los originales gigantes y la última revisión en Windows están pendientes.
 
 ## Alcance funcional
 
@@ -36,15 +38,17 @@ y legibilidad con los originales del curso requiere evaluación específica.
 ## Uso desde el navegador (igual en ambos sistemas)
 
 1. Compilar/arrancar y abrir `http://localhost:8081/`.
-2. Elegir PNG, inspeccionar y **Registrar imagen · P2** con un ID.
-3. Pulsar **Transferir / reanudar y procesar · P3**. Muestra bytes subidos y después
+2. En **Abre tu PNG**, elegir archivo, inspeccionar y **Registrar imagen** con un ID;
+   el registro se selecciona automáticamente en **Tu imagen**.
+3. Pulsar **Transferir y preparar imagen**. Muestra bytes subidos y después
    estado/progreso de procesamiento. Las peticiones contienen `File.slice`, no un
    buffer de la imagen completa.
 4. **Detener** aborta la subida del cliente o solicita interrumpir el decoder.
    Los bloques persistidos se conservan. Un procesamiento cancelado queda `failed`.
 5. Para continuar una subida, volver a seleccionar **el mismo archivo** y escribir
-   **el mismo ID**; pulsar P3 sin registrarlo otra vez. El servidor informa el offset.
-6. **Reiniciar transferencia del ID** borra únicamente `source.part` de un registro
+    **el mismo ID**; pulsar Transferir y preparar imagen sin registrarlo otra vez.
+    El servidor informa el offset.
+6. **Reiniciar transferencia** borra únicamente `source.part` de un registro
    no listo/no activo; permite corregir una copia corrupta. No borra el original local.
 
 Tras una recarga, un trabajo activo continúa en Java; su estado se consulta en el
@@ -52,9 +56,10 @@ catálogo. Tras reiniciar Java, un `processing` sin propietario activo se marca
 `failed` con causa. Se reintenta explícitamente desde el inicio; nunca se declara
 `ready` por encontrar archivos incompletos.
 
-El visor plano y la demo siguen funcionando. Una pirámide P3 `ready` no habilita
-todavía **Cargar región**: el transporte multinivel corresponde a P5 y el pan/zoom
-normal a P6. No se añadió un endpoint HTTP para servir tiles ni originales.
+Una pirámide `ready` habilita el canvas multinivel: ajustar, pan/zoom y 1:1, con
+respaldo nivel 0. No se sirve el original completo ni los tiles por un endpoint
+HTTP del visor: viajan por GTP. La demo/catálogo plano quedan en Diagnóstico.
+Contrato: [protocolo.md](protocolo.md); recorrido: [visor_p6.md](visor_p6.md).
 
 ## Fuente del servidor y CLI
 
@@ -193,7 +198,7 @@ No se instala ninguna herramienta ni dependencia al arrancar la aplicación.
 
 ## Pendientes para cerrar P3
 
-Inventariar/procesar originales del curso; probar en Fedora el nuevo incremento;
+Inventariar/procesar originales del curso; repetir la revisión vigente en Windows;
 medir RSS, disco máximo y rendimiento en ambos equipos; verificar lectura de originales
 de solo lectura; ampliar 16 bits/Adam7 si lo requieren los datos; validar gestión de
 color y `image_Indicators.pdf`; mejorar checkpoints/reanudación de procesamiento y

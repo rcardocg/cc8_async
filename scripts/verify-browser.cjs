@@ -111,7 +111,7 @@ async function main() {
         await page.locator("#registration-id").fill("browser_p2");
         await page.locator("#register-image").click();
         await page.waitForFunction(() => document.getElementById("registration-status").textContent.includes("Registrada browser_p2: pending"));
-        await page.locator("#image").selectOption("browser_p2");
+        assert.equal(await page.locator("#image").inputValue(), "browser_p2", "Registrar debe seleccionar la imagen automáticamente");
         await page.waitForFunction(() => document.getElementById("catalog-status").textContent.includes("browser_p2: pending"));
         assert.equal(await page.locator("#load").isEnabled(), false);
         assert.equal(await page.locator("#tiles img").count(), 0);
@@ -121,7 +121,11 @@ async function main() {
         await page.waitForFunction(() => document.getElementById("ingest-status").textContent.includes("browser_p2: ready"), null, { timeout: 30000 });
         await page.locator("#check-image-status").click();
         await page.waitForFunction(() => document.getElementById("catalog-status").textContent.includes("browser_p2: ready"));
-        assert.equal(await page.locator("#load").isEnabled(), false, "P3 genera tiles; el transporte multinivel es P5");
+        assert.equal(await page.locator("#load").isEnabled(), true, "La imagen P3 ready permite renderizado multinivel");
+        await page.waitForFunction(() => pyramid.cache.size === 1);
+        assert.equal(await page.locator("#pyramid-section").isVisible(), true);
+        await page.locator("#render-native").click();
+        await page.waitForFunction(() => document.getElementById("render-scale").textContent.includes("100.00%"));
         const prepared = await (await context.request.get(`${base}/api/image/browser_p2/metadata`)).json();
         assert.deepEqual(prepared.completedLevels, [0]);
         assert.deepEqual(prepared.availableQualities, [3]);
@@ -143,12 +147,13 @@ async function main() {
         assert.ok(inspections.length >= 4 && inspections.every(size => size === 33));
 
         // Omisión deliberada del ACK de aplicación y un segundo cliente independiente.
-        await page.locator("#catalog-view summary").click();
+        await page.locator("#protocol-diagnostics > summary").click();
         await page.locator("#drop-ack").check();
         await page.locator("#load").click();
         const second = await context.newPage();
         second.on("pageerror", error => errors.push(error.message));
         await second.goto(base);
+        await second.locator("#image").selectOption("demo_numeros");
         await Promise.all([complete(page), complete(second)]);
         assert.ok(frames.some(frame => frame.action === "tile_data" && frame.attempt === 2));
         await page.locator("#drop-ack").uncheck();
@@ -161,7 +166,7 @@ async function main() {
         await page.waitForFunction(() => document.getElementById("metrics").textContent.includes("Ventana del receptor: 32"));
 
         // Dos cambios rápidos: respuestas de la región anterior no deben repintar la nueva.
-        await page.locator('[data-dx="4"]').evaluate(button => { button.click(); button.click(); });
+        await page.locator('#compatibility-controls [data-dx="4"]').evaluate(button => { button.click(); button.click(); });
         await complete(page);
         assert.equal(await page.locator("#tiles img").first().getAttribute("alt"), "Tile 8,0");
         assert.equal(await second.locator("#tiles img").first().getAttribute("alt"), "Tile 0,0");
@@ -181,9 +186,99 @@ async function main() {
         assert.equal(await page.locator("#tiles img").count(), 1);
         assert.ok((await page.locator("#region").textContent()).includes("píxeles X=3840–4095, Y=3840–4095"));
         assert.equal(await page.locator(".tile").getAttribute("title"), "Tile 15,15; píxeles X=3840–4095, Y=3840–4095");
+
+        // Real multilevel pipeline on a synthetic PNG: no original decoded in the browser.
+        const w = 3073, h = 1537;
+        const source = Buffer.alloc((w * 3 + 1) * h);
+        let seed = 12345;
+        for (let y = 0; y < h; y++) for (let x = 0; x < w * 3; x++) {
+            seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+            source[y * (w * 3 + 1) + 1 + x] = seed & 255;
+        }
+        const large = Buffer.concat([pngHeader(w, h), pngChunk("IDAT", deflateSync(source)), pngChunk("IEND", Buffer.alloc(0))]);
+        await page.locator("#local-file").setInputFiles({ name: "p5-pyramid.png", mimeType: "image/png", buffer: large });
+        await page.waitForFunction(() => !document.getElementById("register-image").disabled);
+        await page.locator("#registration-id").fill("browser_p5");
+        await page.locator("#register-image").click();
+        await page.waitForFunction(() => document.getElementById("registration-status").textContent.includes("Registrada browser_p5"));
+        assert.equal(await page.locator("#image").inputValue(), "browser_p5");
+        await page.locator("#ingest-image").click();
+        await page.waitForFunction(() => document.getElementById("ingest-status").textContent.includes("browser_p5: ready"), null, { timeout: 60000 });
+        await page.waitForFunction(() => metadata?.imageId === "browser_p5" && requestId === null && pyramid.cache.size > 0);
+        assert.ok(await page.evaluate(() => pyramid.z < metadata.maxZoom), "Ajustar debe usar un nivel reducido");
+        const fitTileCount = await page.evaluate(() => pyramid.visible.size);
+        assert.ok(fitTileCount < Math.ceil(w / 256) * Math.ceil(h / 256));
+        await page.locator("#render-native").click();
+        await page.waitForFunction(() => pyramid.scale === 1 && pyramid.z === metadata.maxZoom && requestId === null &&
+            [...pyramid.visible].every(id => pyramid.cache.has(id)));
+        // Compare a native tile bitmap against source pixels, independently of screen scaling.
+        const sampled = await page.evaluate(() => {
+            const entry = [...pyramid.cache.values()].find(entry => entry.z === metadata.maxZoom);
+            const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1;
+            const ctx = canvas.getContext("2d"); ctx.drawImage(entry.bitmap, 0, 0);
+            return { x: entry.x * metadata.tileSize, y: entry.y * metadata.tileSize,
+                rgb: [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3) };
+        });
+        const index = sampled.y * (w * 3 + 1) + 1 + sampled.x * 3;
+        assert.deepEqual(sampled.rgb, [...source.subarray(index, index + 3)], "El tile nativo debe preservar los píxeles RGB");
+        await page.waitForFunction(() => [...pyramid.cache.keys()].every(id => pyramid.protects(id)), null, { timeout: 10000 });
+        assert.ok(await page.evaluate(() => pyramid.cache.has(pyramid.backupId)), "El nivel 0 debe sobrevivir al TTL");
+        assert.ok(await page.evaluate(() => pyramid.bytes <= pyramid.maxBytes));
+
+        // Clear graphics, then reconstruct native tiles with a 1500-byte application window.
+        await page.locator("#cancel").click();
+        await page.locator("#transfer-window").selectOption("1500");
+        await page.waitForFunction(() => requestId === null && pyramid.cache.size > 0 &&
+            [...pyramid.visible].every(id => pyramid.cache.has(id)), null, { timeout: 60000 });
+        assert.ok(frames.some(frame => frame.action === "tile_fragment" && frame.fragment_bytes === 1500));
+        assert.ok(frames.filter(frame => frame.action === "tile_fragment").every(frame => frame.fragment_bytes <= 1500));
+        await page.locator("#render-native").click();
+        await page.waitForFunction(() => pyramid.scale === 1 && requestId === null && [...pyramid.visible].every(id => pyramid.cache.has(id)), null, { timeout: 60000 });
+        await page.locator("#transfer-window").selectOption("0");
+        await page.locator('.viewer-toolbar [data-dx="4"]').click();
+        await page.waitForFunction(() => requestId === null && [...pyramid.visible].every(id => pyramid.cache.has(id)));
+        await page.locator("#reconnect").click();
+        await page.waitForFunction(() => protocolReady && requestId === null && pyramid.cache.size > 0);
+        assert.equal(await page.locator("#catalog-view").count(), 0, "El segmento antiguo debe eliminarse");
+        await page.locator("#pyramid-canvas").focus();
+        await page.keyboard.press("1");
+        await page.waitForFunction(() => pyramid.scale === 1 && requestId === null && [...pyramid.visible].every(id => pyramid.cache.has(id)));
+        const beforeKey = await page.evaluate(() => pyramid.cx);
+        await page.keyboard.press("ArrowLeft");
+        assert.ok(await page.evaluate(before => pyramid.cx < before, beforeKey), "Flecha izquierda debe desplazar la vista");
+        await page.waitForFunction(() => requestId === null && [...pyramid.visible].every(id => pyramid.cache.has(id)));
+        const box = await page.locator("#pyramid-canvas").boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        const beforeDrag = await page.evaluate(() => pyramid.cx);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width / 2 + 70, box.y + box.height / 2, { steps: 8 });
+        await page.mouse.up();
+        assert.ok(await page.evaluate(before => pyramid.cx < before, beforeDrag), "Arrastrar debe mover la cámara");
+        await page.waitForFunction(() => requestId === null && [...pyramid.visible].every(id => pyramid.cache.has(id)));
+        assert.equal(await page.locator("#pyramid-canvas").getAttribute("aria-busy"), "false");
+        assert.ok((await page.locator("#render-progress-label").textContent()).includes("Vista completa"));
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.waitForFunction(() => requestId === null && [...pyramid.visible].every(id => pyramid.cache.has(id)));
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, "El layout móvil no debe desbordar");
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        assert.equal(await page.locator("#render-fit").evaluate(button => getComputedStyle(button).transitionDuration), "0s");
+        await page.keyboard.press("0");
+        await page.waitForFunction(() => pyramid.z < metadata.maxZoom && requestId === null && [...pyramid.visible].every(id => pyramid.cache.has(id)));
         assert.deepEqual(external, [], "Todos los recursos deben provenir del servidor Java");
         assert.deepEqual(errors, [], "No debe haber errores JavaScript en el navegador");
-        console.log("PASS: PNG local, preview/zoom, registro P2 pendiente, catálogo/estado/duplicados; transferencia y procesamiento P3 ready; tiles GTP, dos clientes, recuperación, memoria, cancelación, reconexión y recursos locales.");
+        console.log("PASS: PNG/P2/P3, GTP y dos clientes; pirámide P5, ajustar/nativo, píxeles RGB sin pérdida, TTL, ventana de fragmentos 1500 bytes, navegación/reconexión y recursos locales.");
+    } catch (error) {
+        if (browser) {
+            for (const context of browser.contexts()) for (const page of context.pages()) {
+                console.error("Browser diagnostics:", await page.evaluate(() => ({
+                    status: document.getElementById("status")?.textContent,
+                    log: document.getElementById("log")?.textContent,
+                    rendering: typeof pyramid !== "undefined" ? { level: pyramid.z, bytes: pyramid.bytes,
+                        visible: [...pyramid.visible], cached: [...pyramid.cache.keys()], scale: pyramid.scale } : null
+                })).catch(() => null));
+            }
+        }
+        throw error;
     } finally {
         if (browser) await Promise.race([browser.close(), new Promise(resolve => { const timer = setTimeout(resolve, 5000); timer.unref(); })]);
         if (server.exitCode === null && server.signalCode === null) { const exited = once(server, "exit"); server.kill(); await exited; }

@@ -21,7 +21,8 @@ import java.util.Locale;
 
 @Service
 public class TileService {
-    public static final int MAX_TILE_BYTES = 512 * 1024;
+    // A 512x512 RGBA PNG may exceed 1 MiB when it is poorly compressible.
+    public static final int MAX_TILE_BYTES = 2 * 1024 * 1024;
     private final MetadataService metadata;
     private final Path root;
     private final TileQualityService qualityService;
@@ -90,6 +91,7 @@ public class TileService {
             try (var stream = Files.newInputStream(nativePng)) {
                 nativeTile = stream.readNBytes(MAX_TILE_BYTES + 1);
             }
+            if (nativeTile.length == 0 || nativeTile.length > MAX_TILE_BYTES) throw new IOException("Tamaño de tile inválido");
         }
 
         return switch (q) {

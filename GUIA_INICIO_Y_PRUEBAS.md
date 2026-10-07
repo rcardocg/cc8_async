@@ -1,9 +1,10 @@
 # Guía de inicio y comprobación del servidor
 
-**Actualización:** 2026-10-05
-**Objetivo actual:** levantar el sistema y observar que Java recibe solicitudes,
-envía tiles y procesa confirmaciones del navegador, preservando esa base mientras
-avanzan P2/P3. La ingesta secuencial inicial ya está disponible.
+**Actualización documental:** 2026-10-06
+**Objetivo actual:** abrir/preparar un PNG y navegarlo mediante GTP/1, conservando
+detalle y verificando confirmación, recuperación y memoria. Especificación de la
+solución: [RFC interno GTP-001](protocolo.md); pruebas del visor en
+[docs/visor_p6.md](docs/visor_p6.md) y ensayos en [docs/experimentos_p7.md](docs/experimentos_p7.md).
 
 **Ambos ambientes:** rutas/lanzadores en [docs/imagenes.md](docs/imagenes.md),
 registro en [docs/registro_p2.md](docs/registro_p2.md) e ingesta real con comandos
@@ -25,14 +26,14 @@ Para la prueba manual basta Java 21 y el JAR compilado. El frontend está inclui
 en Java: no hay que arrancar otro servidor frontend, una base de datos ni Docker.
 La demo incluida permite observar el intercambio sin preparar imágenes externas.
 
-## 2. Inicio rápido en este equipo
+## 2. Inicio rápido en Windows
 
 ### 2.1. Abrir la carpeta correcta
 
 En la Terminal 1:
 
 ```powershell
-Set-Location -LiteralPath "C:\Users\crist\Desktop\proyecto cc8_2\cc8_async"
+Set-Location -LiteralPath "C:\ruta\al\cc8_async"
 java -version
 Test-Path -LiteralPath ".build/server.jar"
 ```
@@ -70,7 +71,14 @@ En el navegador entra a:
 Abre esa dirección HTTP, en lugar del archivo HTML directamente desde el explorador.
 El navegador obtiene HTML, CSS, JavaScript, metadata y tiles desde Java.
 
-Con `demo_numeros` seleccionada y columna/fila iniciales en `0`, debes ver:
+Para probar tu original, elegirlo en **Abre tu PNG**, registrar y pulsar
+**Transferir y preparar imagen**. Al llegar a `ready`, aparece en **Tu imagen**:
+Ajustar muestra la vista general, 1:1 conserva detalle nativo y arrastre/rueda
+navegan la región. El progreso cuenta tiles visibles y el nivel 0 queda de respaldo.
+
+Para el diagnóstico plano, seleccionar `demo_numeros` y abrir **Diagnóstico del
+protocolo → Compatibilidad de catálogo plano / demo sintética**. Con columna/fila
+en `0`, debes ver:
 
 1. Metadata: imagen **4096 × 4096**, tiles de **256 px**, **256 tiles**, formato PNG.
 2. Una región de **4 columnas × 3 filas**, con números y coordenadas visibles.
@@ -95,14 +103,14 @@ Solicitados 12 tiles.
 Tile demo_numeros:0:0, intento 1; ACK después de decodificar.
 ```
 
-Pulsa **Cargar región** o una flecha para generar más actividad. El panel muestra:
+Pulsa **Actualizar vista** o una flecha de diagnóstico para generar actividad. El panel muestra:
 
 | Dato | Qué significa |
 |---|---|
 | `cwnd` | Ventana de transmisión de esa sesión |
 | `en vuelo` | Tiles enviados cuyo ACK todavía espera el servidor |
 | `cola` | Tiles pendientes de enviar |
-| `RTT aplicación` | Tiempo medido por Java entre envío y ACK, incluyendo procesamiento del cliente |
+| `RTT aplicación` | En tile entero: envío a ACK; en fragmentos: último fragmento enviado a ACK de tile, con procesamiento del cliente |
 | `RTO` | Intervalo base usado para esperar confirmación antes de retransmitir |
 
 En localhost todo puede ocurrir muy rápido. Las métricas mostradas son la última
@@ -135,7 +143,7 @@ si deseas observar nuevas solicitudes de los recursos al recargar.
 1. En **Network / Red**, selecciona el filtro **WS**.
 2. Busca la conexión `tiles`, cuya URL termina en **`/ws/tiles`**.
 3. Selecciónala y abre **Messages / Mensajes** (en algunas versiones, **Frames**).
-4. Pulsa **Cargar región** en el visor sin cerrar DevTools.
+4. Pulsa **Actualizar vista** en el visor sin cerrar DevTools.
 
 En la conexión HTTP local normal verás **101 Switching Protocols** al establecer
 el WebSocket. Después observa los mensajes, identificándolos por `action`:
@@ -221,7 +229,7 @@ solicitud, tiles, ACKs y finalización. Java está atendiendo una nueva región.
 
 1. Abre **Diagnóstico del protocolo**.
 2. Marca **Omitir un ACK (una sola vez por solicitud)**.
-3. Pulsa **Cargar región**.
+3. Pulsa **Actualizar vista**.
 4. Busca `ACK omitido deliberadamente` en el panel.
 5. Espera la retransmisión: el mismo `transfer_id` aparece con `attempt: 2`.
 6. La solicitud debe terminar sin tiles fallidos. Desmarca la opción al terminar.
@@ -285,7 +293,7 @@ empaquetado y la demo local no necesita Internet.
 | No aparecen frames en DevTools | Abrir Network antes de recargar; seleccionar WS → `tiles` → Messages |
 | Estado `Desconectado` | Confirmar que Java esté activo y pulsar **Reconectar** |
 | Cambié código pero veo lo anterior | Volver a empaquetar, reiniciar el JAR y recargar la página sin caché |
-| No aparecen logs nuevos estando inactivo | Es normal; pulsa **Cargar región** o consulta `/api/images` para generar tráfico |
+| No aparecen logs nuevos estando inactivo | Es normal; pulsa **Actualizar vista** o consulta `/api/images` para generar tráfico |
 
 Para iniciar en otro puerto:
 

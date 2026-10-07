@@ -102,7 +102,7 @@ public final class ImageRegistry {
         Registration old = registrations.get(id);
         Source source = new Source(old.source().kind(), old.source().name(), old.source().declaredSizeBytes(), old.source().headerBase64(), sha256);
         update(new Registration(2, withState(old.metadata(), "ready", true), source, old.metadata().totalTiles(), null,
-                "Pirámide PNG completa; CRC/IDAT/IEND y SHA-256 verificados. Transporte multinivel pendiente de P5", null));
+                "Pirámide PNG completa; CRC/IDAT/IEND y SHA-256 verificados. Lista para navegación multinivel", null));
     }
 
     private static ImageMetadata withState(ImageMetadata old, String state, boolean ready) {

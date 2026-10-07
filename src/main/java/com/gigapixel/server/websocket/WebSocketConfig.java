@@ -17,7 +17,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         // El cliente y sus recursos se sirven desde este mismo servidor Java.
-        // GTP/2 soporta GTP/1 legacy para demo y catálogo plano.
+        // GTP/1 con extensiones multinivel y fragmentación; catálogo plano compatible.
         registry.addHandler(handler, "/ws/tiles");
     }
 }

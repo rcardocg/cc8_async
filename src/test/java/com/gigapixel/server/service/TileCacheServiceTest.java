@@ -46,17 +46,57 @@ class TileCacheServiceTest {
     }
 
     @Test
-    void lruEvictionOrdersByAccess() {
+    void lfuEvictionUsesFrequencyNotRecencyOrInsertionOrder() {
         TileCacheService cache = new TileCacheService(400);
         byte[] data = new byte[150];
 
         cache.put("a", data);
+        cache.get("a");
         cache.put("b", data);
         cache.get("a");
+        cache.get("b");
         cache.put("c", data);
 
         assertNull(cache.get("b"));
         assertNotNull(cache.get("a"));
+        assertNotNull(cache.get("c"));
+    }
+
+    @Test
+    void ttlExpiresWithoutReadsAndAccessRenewsOnlyItsOwnDeadline() {
+        var clock = new java.util.concurrent.atomic.AtomicLong();
+        TileCacheService cache = new TileCacheService(1000, 100, clock::get);
+        cache.put("a", new byte[100]);
+        cache.put("b", new byte[200]);
+        clock.set(90);
+        assertNotNull(cache.get("a"));
+        clock.set(100);
+        cache.expire();
+        assertEquals(100, cache.stats().usedBytes());
+        assertNull(cache.get("b"));
+        clock.set(190);
+        cache.expire();
+        assertEquals(0, cache.stats().entries());
+        assertEquals(0, cache.stats().usedBytes());
+    }
+
+    @Test
+    void agingAllowsHistoricallyPopularTilesToLoseTheirPriority() {
+        var clock = new java.util.concurrent.atomic.AtomicLong();
+        TileCacheService cache = new TileCacheService(400, 100, clock::get);
+        cache.put("a", new byte[150]);
+        cache.put("b", new byte[150]);
+        for (int i = 0; i < 64; i++) cache.get("a");
+        // Both remain alive; b is now used more often, so past popularity must decay.
+        for (int i = 1; i <= 24; i++) {
+            clock.set(i * 90);
+            cache.get("a");
+            cache.get("b");
+            cache.get("b");
+        }
+        cache.put("c", new byte[150]);
+        assertNull(cache.get("a")); // New usage overtakes historical popularity after aging.
+        assertNotNull(cache.get("b"));
         assertNotNull(cache.get("c"));
     }
 

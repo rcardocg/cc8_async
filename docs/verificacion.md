@@ -1,5 +1,52 @@
 # Verificación de la revisión
 
+Documento principal: [RFC interno GTP-001](../protocolo.md). Las entradas fechadas
+son evidencia histórica: describen lo ejecutado entonces, no un contrato alternativo
+ni pruebas ejecutadas otra vez al actualizar esta documentación.
+
+## Matriz de trazabilidad vigente
+
+| Mecanismo de la solución | Código principal | Evidencia y límite |
+|---|---|---|
+| Registro/offset/ingesta/publicación | `ImageRegistry`, `PngIngestionService`, decoder y builder | Suites Java de registro/ingesta/decoder e integraciones; no acredita originales de 93 GB. |
+| Ventana, ACK, timeout, cancelación, fragmentos | `TileWebSocketHandlerV2` registrado en `WebSocketConfig` | 17 casos de `TileWebSocketHandlerTest`; E2E y benchmark. No implementa TCP ni SACK por rangos. |
+| LFU+envejecimiento+TTL | `TileCacheService` | 12 casos de `TileCacheServiceTest`; límite de arrays cacheados, no RSS total. |
+| Variantes q0–q3 | `TileQualityService` | 6 casos unitarios; el visor/benchmark pide q3, no calidad adaptativa integrada. |
+| Selección de nivel, respaldo, progreso y memoria cliente | `viewer.js`, `pyramid-view.js` | E2E Chromium: nativo/RGB, TTL/respaldo, flujo integrado, teclado/móvil y reconexión. |
+| Conservación entre ventanas y desperdicio de gestos | `benchmark-viewer.cjs` | 18 ensayos, SHA-256 de todos los tiles finales; una repetición en localhost por caso, no comparación estadística SR/GTP-RA. |
+
+El build vigente registrado suma 77 casos Java. Las cifras 26/40/53/71 de entradas
+anteriores pertenecen a revisiones previas. Cerrar evaluación requiere originales
+gigantes, legibilidad humana, RSS/disco y repetición de última revisión en Windows.
+
+## 2026-10-06 · Continuación P6/P7
+
+- P6: flujo integrado sin segmento «Visor de tiles preparados», respaldo nivel 0
+  protegido, cancelación parcial durante gestos, progreso de cobertura, teclado,
+  puntero primario, layout móvil y movimiento reducido. Skill `emil-design-eng`.
+- Build Java: **77 casos aprobados**, sin fallos/errores/omitidas.
+- E2E Chromium ampliado: respaldo después del TTL, registro/selección automática,
+  navegación, móvil y preferencias de movimiento, además de regresiones previas.
+- P7: **18 casos aprobados** (9 sobre imagen local 4193×4193, original registrado
+  de 52 832 474 bytes; 9 sobre PNG sintético 3073×1537). SHA-256 de tiles finales
+  idénticos entre ventanas 0/1500/16000; ACK omitido, pan/cancelación, TTL y límite
+  de bitmaps verificados. Pico local ~8,32 MiB de bitmaps, no RSS/heap total.
+- Capturas desktop/móvil revisadas; resultados y metodología en
+  [experimentos_p7.md](experimentos_p7.md). No equivale a validar 93 GB.
+
+## 2026-10-06 · P5/P6: primer renderizado multinivel y TTL
+
+- Fedora, Java 21.0.12.1 / Maven 3.9.11 / Node 22.23.2 / Chromium headless.
+- `bash scripts/build.sh`: 77 pruebas Java, sin fallos/errores/omitidas.
+- `verify-browser.cjs`: aprobado con procesamiento de PNG sintético 3073×1537,
+  zoom reducido/nativo, píxeles RGB comparados con fuente, TTL y fragmentación
+  de 1500 bytes, navegación/reconexión y regresión de dos clientes.
+- Handler activo probado; cola y contadores corregidos, cancelación en vuelo,
+  recuperación, presupuesto RGBA por dimensiones. Tile máximo 2 MiB.
+- Caché actual **LFU con envejecimiento + TTL**, reemplaza la LRU histórica de P4.
+- Guía, contrato, evidencia y pendientes: [renderizado_p5.md](renderizado_p5.md).
+- No hay evidencia con originales gigantes del curso ni repetición P5 en Windows.
+
 ## 2026-10-05 · P4: calidades progresivas y caché de tiles
 
 ### Resumen P4
@@ -9,7 +56,7 @@
 - **TileService**: usa caché y servicio de calidades para imágenes multinivel (P3); catálogo plano y demo siguen funcionando sin cambios.
 - **WebSocket**: acepta `z` y `q` en `fetch_tiles`; responde con `z` y `q` en `tile_data`; catálogo plano rechaza `z`/`q` para mantener compatibilidad.
 
-### Matriz de ambientes
+### Matriz de ambientes P4
 
 | Ambiente | Evidencia disponible |
 |---|---|
@@ -49,7 +96,7 @@
 
 ## 2026-10-05 · P2 reproducido y primer incremento P3
 
-### Matriz de ambientes
+### Matriz de ambientes P2/P3
 
 | Ambiente | Evidencia disponible |
 |---|---|
@@ -62,7 +109,7 @@ ese atributo. La evidencia Fedora previa se conserva en la bitácora, sin atribu
 la ejecución de código nuevo. El build usa `.build/`; se conservaron los cambios
 preexistentes de binarios/configuración en `target/classes`.
 
-### Comandos reproducibles
+### Comandos reproducibles P2/P3
 
 Windows (PowerShell, Maven y Java en PATH):
 
@@ -135,7 +182,7 @@ validación física sin red ni legibilidad final. [Procedimiento P3](ingesta_p3.
 
 Fecha: 2026-10-02. Entorno: Windows, Temurin Java 21.0.11, Maven 3.9.9.
 
-## Comandos reproducibles
+## Comandos reproducibles de la revisión 2026-10-02
 
 ```powershell
 mvn "-Dgigapixel.buildDirectory=.build" test package

@@ -81,12 +81,13 @@ public class TileWebSocketHandlerV2 extends TextWebSocketHandler {
         try {
             try {
                 session.setTextMessageSizeLimit(MAX_MESSAGE_BYTES);
-                // Default to GTP/1 for backward compatibility; client can negotiate GTP/2
+                // GTP/1 additive extensions; do not advertise an unimplemented wire version.
                 state.protocolVersion = 1;
                 ObjectNode ready = event(state, "ready").put("protocol", "GTP/1").put("version", 1)
                         .put("max_batch", MAX_BATCH).put("max_window", MAX_WINDOW_TILES)
                         .put("initial_window", 2);
-                ready.set("supports", mapper.createArrayNode().add("GTP/1").add("GTP/2"));
+                ready.set("supports", mapper.createArrayNode().add("GTP/1"));
+                ready.put("out_of_view_ttl_ms", 5000).put("max_in_flight_bytes", MAX_IN_FLIGHT_BYTES);
                 send(state, ready);
             } catch (IOException | RuntimeException exception) {
                 disconnect(state);
@@ -114,7 +115,7 @@ public class TileWebSocketHandlerV2 extends TextWebSocketHandler {
                     throw new IllegalArgumentException("Se requiere un objeto JSON");
                 }
                 int version = request.path("version").asInt(1);
-                if (version != 1 && version != 2) {
+                if (version != 1) {
                     throw new IllegalArgumentException("Versión no soportada: " + version);
                 }
                 state.protocolVersion = version;
@@ -122,6 +123,7 @@ public class TileWebSocketHandlerV2 extends TextWebSocketHandler {
                 switch (action) {
                     case "fetch_tiles" -> fetch(state, request);
                     case "ack_tile" -> acknowledge(state, request);
+                    case "ack_fragment" -> acknowledgeFragment(state, request);
                     case "ack_batch" -> acknowledgeBatch(state, request);
                     case "memory_pressure" -> memoryPressure(state, request);
                     case "gesture" -> gesture(state, request);
@@ -151,6 +153,10 @@ public class TileWebSocketHandlerV2 extends TextWebSocketHandler {
         boolean flat = image.maxZoom() == null;
         boolean replace = request.path("replace").asBoolean(false);
         String priority = request.path("priority").asText("viewport");
+        int fragmentBytes = request.has("transfer_window_bytes") ? integer(request, "transfer_window_bytes") : 0;
+        if (fragmentBytes != 0 && (fragmentBytes < 256 || fragmentBytes > 65536)) {
+            throw new IllegalArgumentException("transfer_window_bytes debe ser de 256 a 65536 bytes");
+        }
 
         var validated = new LinkedHashSet<TileKey>();
         for (JsonNode tile : array) {
@@ -177,6 +183,7 @@ public class TileWebSocketHandlerV2 extends TextWebSocketHandler {
         state.requestId = requestId;
         state.lastRequestId = requestId;
         state.priority = priority;
+        state.fragmentBytes = fragmentBytes;
 
         for (TileKey key : validated) {
             state.scoreboard.put(key, new ScoreEntry(key));
@@ -191,11 +198,29 @@ public class TileWebSocketHandlerV2 extends TextWebSocketHandler {
         String transferId = text(request, "transfer_id");
         String tileId = text(request, "tile_id");
         InFlightV2 flight = state.inFlight.get(transferId);
-        if (!Objects.equals(state.requestId, requestId) || flight == null || !flight.key.id().equals(tileId)) {
+        if (!Objects.equals(state.requestId, requestId) || flight == null || !flight.key.id().equals(tileId)
+                || (state.fragmentBytes > 0 && flight.offset != flight.data.length)) {
             send(state, event(state, "ack_ignored").put("request_id", requestId).put("transfer_id", transferId));
             return;
         }
         handleAck(state, flight, request.path("decode_ms").asLong(0));
+    }
+
+    private void acknowledgeFragment(SessionStateV2 state, JsonNode request) throws IOException {
+        String requestId = text(request, "request_id");
+        String transferId = text(request, "transfer_id");
+        String tileId = text(request, "tile_id");
+        int offset = integer(request, "offset");
+        int attempt = integer(request, "attempt");
+        InFlightV2 flight = state.inFlight.get(transferId);
+        if (!Objects.equals(requestId, state.requestId) || flight == null || !flight.key.id().equals(tileId)
+                || flight.pendingBytes == 0 || attempt != flight.attempts || offset != flight.offset + flight.pendingBytes) {
+            send(state, event(state, "ack_ignored").put("request_id", requestId).put("transfer_id", transferId));
+            return;
+        }
+        flight.offset = offset;
+        state.fragmentInFlightBytes -= flight.pendingBytes;
+        flight.pendingBytes = 0;
     }
 
     private void acknowledgeBatch(SessionStateV2 state, JsonNode request) throws IOException {
@@ -214,7 +239,8 @@ public class TileWebSocketHandlerV2 extends TextWebSocketHandler {
             String tileId = text(ack, "tile_id");
             long decodeMs = ack.path("decode_ms").asLong(0);
             InFlightV2 flight = state.inFlight.get(transferId);
-            if (flight != null && flight.key.id().equals(tileId)) {
+            if (flight != null && flight.key.id().equals(tileId)
+                    && (state.fragmentBytes == 0 || flight.offset == flight.data.length)) {
                 handleAck(state, flight, decodeMs);
             } else {
 send(state, event(state, "ack_ignored").put("request_id", requestId).put("transfer_id", transferId));
@@ -227,7 +253,7 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
         long rtt = Math.max(1, now - flight.sentAt);
         state.inFlight.remove(flight.transferId);
         state.inFlightBytes -= flight.data.length;
-        state.receiverWindowBytes = Math.max(0, state.receiverWindowBytes - flight.decodedBytes);
+        state.decodedInFlightBytes -= flight.decodedBytes;
         state.acknowledged++;
 
         ScoreEntry entry = state.scoreboard.get(flight.key);
@@ -248,8 +274,8 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
         } else {
             state.cwnd = Math.min(MAX_WINDOW_TILES, state.cwnd + (state.cwnd < state.ssthresh ? 1 : 1.0 / state.cwnd));
         }
-        state.smoothedRtt = state.smoothedRtt == 0 ? rtt : (long) (0.875 * state.smoothedRtt + 0.125 * rtt);
         state.rttVar = state.rttVar == 0 ? rtt / 2 : (long) (0.75 * state.rttVar + 0.25 * Math.abs(state.smoothedRtt - rtt));
+        state.smoothedRtt = state.smoothedRtt == 0 ? rtt : (long) (0.875 * state.smoothedRtt + 0.125 * rtt);
         state.rto = Math.max(MIN_RTO_MS, Math.min(MAX_RTO_MS, state.smoothedRtt + 4 * state.rttVar));
     }
 
@@ -257,10 +283,13 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
         long usage = nonNegativeLong(request, "current_usage");
         long limit = nonNegativeLong(request, "memory_limit");
         if (limit == 0) throw new IllegalArgumentException("memory_limit debe ser positivo");
+        long budget = request.has("receiver_window_bytes")
+                ? nonNegativeLong(request, "receiver_window_bytes") : 32L * 512 * 512 * 4;
+        if (budget == 0) throw new IllegalArgumentException("receiver_window_bytes debe ser positivo");
         double ratio = (double) usage / limit;
         int previousWindow = state.receiverWindow;
         state.receiverWindow = ratio >= 0.8 ? 2 : ratio >= 0.6 ? 4 : MAX_WINDOW_TILES;
-        state.receiverWindowBytes = (long) (state.receiverWindow * 256 * 256 * 4 * 0.5);
+        state.receiverWindowBytes = budget;
         if (state.receiverWindow < previousWindow && ratio >= 0.8) state.decreaseWindow();
         send(state, event(state, "adjust_strategy").put("receiver_window", state.receiverWindow)
                 .put("max_tiles_concurrent", state.window()).put("reduce_prefetch", ratio >= 0.6)
@@ -301,9 +330,16 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
         for (JsonNode tile : tiles) {
             TileKey key = TileKey.parse(text(tile, "tile_id"));
             ScoreEntry entry = state.scoreboard.get(key);
-            if (entry != null && !entry.acked && !entry.sent) {
+            if (entry != null && !entry.acked && !entry.failed && !entry.cancelled) {
                 entry.cancelled = true;
                 state.queue.remove(key);
+                InFlightV2 flight = state.inFlight.remove(entry.transferId);
+                if (flight != null) {
+                    state.inFlightBytes -= flight.data.length;
+                    state.decodedInFlightBytes -= flight.decodedBytes;
+                    state.fragmentInFlightBytes -= flight.pendingBytes;
+                }
+                state.cancelled++;
             }
         }
         send(state, event(state, "cancel_tiles_accepted").put("request_id", requestId));
@@ -344,6 +380,7 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
         while (iterator.hasNext()) {
             var entry = iterator.next();
             InFlightV2 flight = entry.getValue();
+            if (state.fragmentBytes > 0 && flight.pendingBytes == 0 && flight.offset < flight.data.length) continue;
             if (now - flight.sentAt < flight.timeout) continue;
             if (!decreased) {
                 state.decreaseWindow();
@@ -352,6 +389,8 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
             if (flight.attempts >= MAX_ATTEMPTS) {
                 iterator.remove();
                 state.inFlightBytes -= flight.data.length;
+                state.decodedInFlightBytes -= flight.decodedBytes;
+                state.fragmentInFlightBytes -= flight.pendingBytes;
                 state.failed++;
                 ScoreEntry se = state.scoreboard.get(flight.key);
                 if (se != null) { se.failed = true; se.attempts = flight.attempts; }
@@ -359,7 +398,7 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
                         .put("transfer_id", entry.getKey()).put("code", "ack_timeout")
                         .put("message", "No se confirmó el tile tras " + MAX_ATTEMPTS + " intentos"));
             } else {
-                // GTP-RA: decide whether to retransmit
+                // Required content stays recoverable; obsolete content is explicitly cancelled.
                 if (shouldRetransmit(state, flight)) {
                     flight.attempts++;
                     flight.timeout = Math.min(MAX_RTO_MS, flight.timeout * 2);
@@ -367,6 +406,8 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
                 } else {
                     iterator.remove();
                     state.inFlightBytes -= flight.data.length;
+                    state.decodedInFlightBytes -= flight.decodedBytes;
+                    state.fragmentInFlightBytes -= flight.pendingBytes;
                     state.failed++;
                     ScoreEntry se = state.scoreboard.get(flight.key);
                     if (se != null) { se.failed = true; se.abandoned = true; }
@@ -381,6 +422,17 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
                 && state.inFlightBytes <= MAX_IN_FLIGHT_BYTES - TileService.MAX_TILE_BYTES) {
             TileKey key = selectNextTile(state);
             if (key == null) break;
+            int decodedBytes = estimateDecodedBytes(key);
+            if (decodedBytes > state.receiverWindowBytes) {
+                state.queue.remove(key);
+                state.scoreboard.get(key).failed = true;
+                state.failed++;
+                send(state, event(state, "tile_error").put("request_id", state.requestId).put("tile_id", key.id())
+                        .put("code", "receiver_budget_too_small").put("message", "Aumente el presupuesto de decodificación para este tile"));
+                continue;
+            }
+            if (state.decodedInFlightBytes + decodedBytes > state.receiverWindowBytes) break;
+            state.queue.remove(key);
             ScoreEntry se = state.scoreboard.get(key);
             if (se == null || se.cancelled || se.sent) {
                 state.queue.remove(key);
@@ -398,20 +450,25 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
                 continue;
             }
             String transferId = Long.toString(state.nextTransferId++);
-            int decodedBytes = estimateDecodedBytes(data);
             InFlightV2 flight = new InFlightV2(key, data, state.rto, decodedBytes);
             flight.transferId = transferId;
             state.inFlight.put(transferId, flight);
             state.inFlightBytes += data.length;
-            state.receiverWindowBytes += decodedBytes;
+            state.decodedInFlightBytes += decodedBytes;
             se.sent = true;
             se.transferId = transferId;
             sendTile(state, transferId, flight);
         }
 
+        if (state.fragmentBytes > 0) {
+            for (InFlightV2 flight : state.inFlight.values()) {
+                if (flight.pendingBytes == 0 && flight.offset < flight.data.length) sendFragment(state, flight);
+            }
+        }
+
         if (state.requestId != null && state.queue.isEmpty() && state.inFlight.isEmpty()) {
             send(state, event(state, "request_complete").put("request_id", state.requestId).put("total", state.total)
-                    .put("acknowledged", state.acknowledged).put("failed", state.failed));
+                    .put("acknowledged", state.acknowledged).put("failed", state.failed).put("cancelled", state.cancelled));
             state.clearRequest();
         }
     }
@@ -420,7 +477,8 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
         if (state.queue.isEmpty()) return null;
         // Nearest-neighbor from viewport center for viewport priority
         if ("viewport".equals(state.priority) && !state.scoreboard.isEmpty()) {
-            int centerX = 0, centerY = 0, count = 0;
+            long centerX = 0, centerY = 0;
+            int count = 0;
             for (ScoreEntry e : state.scoreboard.values()) {
                 if (!e.cancelled && !e.acked && !e.failed) {
                     centerX += e.key.x();
@@ -433,33 +491,35 @@ send(state, event(state, "ack_ignored").put("request_id", requestId).put("transf
                 centerY /= count;
                 return state.queue.stream()
                         .filter(k -> !state.scoreboard.get(k).cancelled)
-                        .min(TileKey.byProximity(centerX, centerY))
+                        .min(TileKey.byProximity((int) centerX, (int) centerY))
                         .orElse(state.queue.peekFirst());
             }
         }
         return state.queue.peekFirst();
     }
 
-private boolean shouldRetransmit(SessionStateV2 state, InFlightV2 flight) {
-        // GTP-RA utility function
+    private boolean shouldRetransmit(SessionStateV2 state, InFlightV2 flight) {
         ScoreEntry entry = state.scoreboard.get(flight.key);
-        if (entry == null) return false;
-        double visibility = entry.acked ? 0 : 1.0;
-        double qualityFactor = (3.0 - flight.key.q()) / 3.0;
-        double prefetch = state.queue.contains(flight.key) ? 0.2 : 0;
-        double inFlightPenalty = state.inFlight.size() * 0.1;
-        double pressure = state.receiverWindow < MAX_WINDOW_TILES ? 1.0 : 0;
-        double utility = 1.0 * visibility + 0.6 * qualityFactor + 0.4 * prefetch
-                - 0.8 * inFlightPenalty - 1.2 * pressure;
-        return utility >= 0.35 && flight.attempts < MAX_ATTEMPTS;
+        return entry != null && !entry.cancelled && !entry.acked && flight.attempts < MAX_ATTEMPTS;
     }
 
-    private int estimateDecodedBytes(byte[] compressed) {
-        // Rough estimate: PNG ~10-20% of raw, JPEG ~5-10%
-        return Math.min(256 * 256 * 4, compressed.length * 10);
+    private int estimateDecodedBytes(TileKey key) {
+        ImageMetadata image = metadata.getImage(key.imageId());
+        if (key.q() == 0) return 64 * 64 * 4;
+        var level = image.levels().stream().filter(l -> l.z() == (key.z() == null ? 0 : key.z())).findFirst().orElseThrow();
+        long width = Math.min(image.tileSize(), level.width() - (long) key.x() * image.tileSize());
+        long height = Math.min(image.tileSize(), level.height() - (long) key.y() * image.tileSize());
+        return Math.toIntExact(width * height * 4);
     }
 
     private void sendTile(SessionStateV2 state, String transferId, InFlightV2 flight) throws IOException {
+        if (state.fragmentBytes > 0) {
+            state.fragmentInFlightBytes -= flight.pendingBytes;
+            flight.pendingBytes = 0;
+            flight.offset = 0;
+            sendFragment(state, flight);
+            return;
+        }
         String format = metadata.getImage(flight.key.imageId()).format();
         if (flight.key.q() != 3) format = (flight.key.q() == 0 ? "png" : "jpeg");
         ObjectNode message = event(state, "tile_data").put("request_id", state.requestId).put("transfer_id", transferId)
@@ -470,6 +530,25 @@ private boolean shouldRetransmit(SessionStateV2 state, InFlightV2 flight) {
                 .put("attempt", flight.attempts)
                 .put("data", Base64.getEncoder().encodeToString(flight.data));
         flight.sentAt = clock.getAsLong();
+        send(state, message);
+    }
+
+    private void sendFragment(SessionStateV2 state, InFlightV2 flight) throws IOException {
+        int available = state.fragmentBytes - state.fragmentInFlightBytes;
+        if (available <= 0) return;
+        int length = Math.min(available, flight.data.length - flight.offset);
+        String format = metadata.getImage(flight.key.imageId()).format();
+        if (flight.key.q() != 3) format = flight.key.q() == 0 ? "png" : "jpeg";
+        ObjectNode message = event(state, "tile_fragment").put("request_id", state.requestId)
+                .put("transfer_id", flight.transferId).put("tile_id", flight.key.id())
+                .put("imageId", flight.key.imageId()).put("x", flight.key.x()).put("y", flight.key.y())
+                .put("z", flight.key.z()).put("q", flight.key.q()).put("compression", format)
+                .put("size_bytes", flight.data.length).put("offset", flight.offset).put("fragment_bytes", length)
+                .put("attempt", flight.attempts).put("data", Base64.getEncoder().encodeToString(
+                        Arrays.copyOfRange(flight.data, flight.offset, flight.offset + length)));
+        flight.pendingBytes = length;
+        flight.sentAt = clock.getAsLong();
+        state.fragmentInFlightBytes += length;
         send(state, message);
     }
 
@@ -492,6 +571,8 @@ private boolean shouldRetransmit(SessionStateV2 state, InFlightV2 flight) {
     private ObjectNode status(SessionStateV2 state) {
         return event(state, "transfer_state").put("request_id", state.requestId).put("cwnd", state.cwnd)
                 .put("receiver_window", state.receiverWindow).put("receiver_window_bytes", state.receiverWindowBytes)
+                .put("decoded_in_flight_bytes", state.decodedInFlightBytes)
+                .put("fragment_in_flight_bytes", state.fragmentInFlightBytes).put("transfer_window_bytes", state.fragmentBytes)
                 .put("in_flight", state.inFlight.size()).put("pending", state.queue.size())
                 .put("in_flight_bytes", state.inFlightBytes)
                 .put("rtt_ms", state.smoothedRtt).put("rto_ms", state.rto)
@@ -499,7 +580,7 @@ private boolean shouldRetransmit(SessionStateV2 state, InFlightV2 flight) {
     }
 
     private ObjectNode event(SessionStateV2 state, String action) {
-        // Force version 1 for backward compatibility with existing tests
+        // The deployed wire contract is GTP/1, including additive extensions.
         return mapper.createObjectNode().put("version", 1).put("action", action);
     }
 
@@ -615,14 +696,18 @@ private boolean shouldRetransmit(SessionStateV2 state, InFlightV2 flight) {
         long rto = INITIAL_RTO_MS;
         long nextTransferId = 1;
         int receiverWindow = MAX_WINDOW_TILES;
-        long receiverWindowBytes;
+        long receiverWindowBytes = 32L * 512 * 512 * 4;
+        long decodedInFlightBytes;
         int inFlightBytes;
+        int fragmentBytes;
+        int fragmentInFlightBytes;
         String requestId;
         String lastRequestId;
         String priority = "viewport";
         int total;
         int acknowledged;
         int failed;
+        int cancelled;
         int protocolVersion = 1;
         int targetQuality = 3;
         boolean closed;
@@ -642,8 +727,9 @@ private boolean shouldRetransmit(SessionStateV2 state, InFlightV2 flight) {
             inFlight.clear();
             scoreboard.clear();
             inFlightBytes = 0;
-            receiverWindowBytes = 0;
-            total = acknowledged = failed = 0;
+            fragmentInFlightBytes = 0;
+            decodedInFlightBytes = 0;
+            total = acknowledged = failed = cancelled = 0;
         }
     }
 
@@ -655,6 +741,8 @@ private boolean shouldRetransmit(SessionStateV2 state, InFlightV2 flight) {
         long sentAt;
         long timeout;
         String transferId;
+        int offset;
+        int pendingBytes;
 
         InFlightV2(TileKey key, byte[] data, long timeout, int decodedBytes) {
             this.key = key;

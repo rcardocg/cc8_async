@@ -1,9 +1,13 @@
 # P2 — Registro de originales y metadata multinivel
 
+**Revisión documental 2026-10-06:** el registro forma parte de la solución descrita
+en el [RFC interno GTP-001](../protocolo.md); la navegación P5/P6 ya está integrada.
+Las cifras de pruebas P2 siguientes corresponden a su ejecución histórica.
+
 ## Qué se puede hacer
 
 Desde el cliente, elegir un PNG, inspeccionarlo, escribir un identificador y pulsar
-**Registrar imagen · P2**. Se vuelve a validar su cabecera en el servidor y se guarda
+**Registrar imagen**. Se vuelve a validar su cabecera en el servidor y se guarda
 un registro persistente. El identificador aparece en el catálogo sin reiniciar.
 
 Registro no significa ingesta: el original permanece en la máquina del navegador.
@@ -74,18 +78,18 @@ filas/columnas del nivel, incluyendo bordes parciales. Validar una coordenada
 prevista no demuestra que el tile esté disponible.
 
 El constructor plano `TileKey(imageId,x,y)` mantiene `z=null`, `q=3` y la identidad
-anterior `imageId:x:y`. GTP/1 v1 sigue rechazando z explícito; el cambio de transporte
-se hará en P5. Un registro pending/failed no puede transferir tiles. El cliente
-deshabilita **Cargar región** para esos registros.
+anterior `imageId:x:y`. GTP/1 rechaza z/q no nulos solo en catálogo plano; registros
+multinivel `ready` admiten z/q. Un registro pending/failed no puede transferir tiles.
+El cliente deshabilita **Actualizar vista** para esos registros.
 
 ## Cómo probar P2
 
 1. Compilar y arrancar con los lanzadores habituales. Abrir `http://localhost:8081/`.
 2. Elegir un PNG pequeño y esperar **Cabecera válida**.
-3. Escribir `prueba_p2` y pulsar **Registrar imagen · P2**.
+3. Escribir `prueba_p2` y pulsar **Registrar imagen**.
 4. Debe indicar `pending`; aparecerá `<work>/prueba_p2/meta.json`, sin tiles.
-5. Elegir `prueba_p2` en el selector inferior: metadata muestra dimensiones y
-   **Consultar estado** muestra cero tiles y espera del original. Cargar está deshabilitado.
+5. `prueba_p2` queda seleccionado automáticamente en **Tu imagen**: metadata muestra dimensiones y
+   **Consultar estado** muestra cero tiles y espera del original. **Actualizar vista** está deshabilitado.
 6. Repetir registro con el mismo identificador: debe rechazarlo sin cambiar el manifest.
 7. Reiniciar servidor y refrescar página: el identificador debe seguir en catálogo.
 8. Elegir `demo_numeros`: transferencia GTP y navegación de la demo siguen funcionando.
@@ -109,5 +113,6 @@ Tras reiniciar, el usuario deberá volver a elegir el original si todavía está
 en el navegador; P2 no conserva permisos de lectura del explorador. P3 mantiene los
 bloques recibidos en work; requiere volver a seleccionar el mismo archivo para continuar
 la subida. Procesa una fuente completa, valida su integridad y publica la pirámide
-terminada como `ready`. Ver [ingesta_p3.md](ingesta_p3.md). Después se integran
-calidad/transporte/visor multinivel.
+terminada como `ready`. Ver [ingesta_p3.md](ingesta_p3.md). Calidad/transporte y
+visor multinivel están implementados según [protocolo.md](protocolo.md) y
+[visor_p6.md](visor_p6.md); el visor pide q3, no adaptación automática de calidad.

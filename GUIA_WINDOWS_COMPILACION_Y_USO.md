@@ -1,6 +1,11 @@
 # Windows — Guía de compilación, ejecución y carga de imágenes
 
-**Actualización:** 2026-10-05.
+**Actualización documental:** 2026-10-06.
+
+Especificación principal: [RFC interno GTP-001](protocolo.md). Esta guía describe
+uso de la implementación actual; la evidencia de ejecuciones previas en Windows
+está fechada en [docs/verificacion.md](docs/verificacion.md). La última revisión
+P5/P6/P7 se verificó en Fedora y aún debe repetirse en Windows.
 
 Esta guía usa **PowerShell**, Java 21 y los lanzadores `.cmd` del proyecto.
 Está ubicada en la raíz, junto a `GUIA_INICIO_Y_PRUEBAS.md`.
@@ -8,8 +13,8 @@ Está ubicada en la raíz, junto a `GUIA_INICIO_Y_PRUEBAS.md`.
 ## 1. En qué punto de funcionamiento estamos
 
 Actualmente puedes **inspeccionar un PNG, registrarlo, transferirlo al servidor y
-generar su pirámide de tiles**. También puedes probar el protocolo GTP con la demo
-integrada y con el catálogo plano existente.
+generar su pirámide y navegarla con pan/zoom, ajustar y 1:1**. También puedes probar
+GTP con la demo/catálogo plano dentro de Diagnóstico.
 
 | Parte | Qué funciona actualmente |
 |---|---|
@@ -17,22 +22,23 @@ integrada y con el catálogo plano existente.
 | P1 — Inspección | Seleccionar un PNG, leer su cabecera de 33 bytes, mostrar dimensiones y estimaciones, descargar informe y ver una vista previa si es pequeño. |
 | P2 — Registro | Guardar ID y metadata, consultar estado, detectar duplicados y conservar registros al reiniciar. |
 | P3 — Procesamiento inicial | Transferir por bloques, procesar PNG compatibles secuencialmente, generar tiles/niveles, informar progreso, cancelar y reintentar. |
-| P4 — Calidades y caché | Generar q0–q3 bajo demanda, caché LRU en servidor, endpoint `/api/cache/stats`. WebSocket soporta `z` y `q`. |
-| P5 — Protocolo multinivel y GTP-RA | **En desarrollo**: WebSocket GTP/2 con z/q, SACK, scoreboard, RTT/RTTVAR/Karn, cancelación parcial, calidad adaptativa. |
+| P4 — Calidades y caché | q0–q3 bajo demanda; caché actual LFU con envejecimiento + TTL; `/api/cache/stats`. El visor utiliza q3. |
+| P5 — Protocolo multinivel | GTP/1 con z/q, ACK, SRTT/RTTVAR/Karn, cancelación parcial, presupuestos y fragmentación opcional; no GTP/2 ni SACK por rangos. |
 | Protocolo existente | Demo y catálogo plano: solicitar regiones, confirmar tiles, retransmisión, ventana, cancelación. |
-| P6 — Visor pan/zoom | Pendiente: navegación normal sobre pirámide P3/P5. |
+| P6 — Visor pan/zoom | Canvas, navegación al cursor/teclado, respaldo nivel 0 protegido, progreso y TTL espacial. |
+| P7 — Ensayos | Benchmark reproducible de ventanas, reenvíos, cancelación, bitmaps y hashes; originales gigantes pendientes. |
 
-**Importante:** cuando tu imagen llegue a `ready`, sus tiles estarán preparados en
-disco. **Todavía no podrás navegar esa pirámide desde el visor GTP actual**: el botón
-**Cargar región** seguirá deshabilitado para imágenes multinivel. Es el límite actual
-de integración con P5/P6, no una señal de que la ingesta haya fallado.
+**Importante:** `ready` habilita el canvas de **Tu imagen**. Registrar selecciona el
+ID automáticamente y, tras procesarlo, el visor solicita respaldo y región visible.
+Si una imagen lista no puede cargarse, revisar conexión, JAR actualizado y caché
+del navegador; ya no es una limitación esperada del transporte multinivel.
 
 La vista previa local de un PNG pequeño y la demo son recorridos distintos:
 
 - **Vista previa local:** muestra el archivo seleccionado usando el navegador.
 - **Demo GTP:** muestra tiles enviados por Java a través de WebSocket.
-- **Tu imagen procesada por P3:** genera archivos de tiles y estado persistido; su
-  visualización multinivel en el cliente está pendiente.
+- **Tu imagen procesada:** Java sirve los tiles del nivel/región necesarios por
+  GTP; vista general reducida y resolución nativa al acercar.
 
 ### PNG que puedes procesar ahora
 
@@ -167,15 +173,18 @@ Espera a que termine. El lanzador compila, ejecuta las pruebas y genera:
 .build/server.jar
 ```
 
-**Resultado esperado:**
+**Resultado esperado:** `BUILD SUCCESS` y todas las pruebas aplicables aprobadas.
+El conteo cambia al incorporar suites. Como referencia histórica, la revisión P3
+ejecutada en Windows produjo:
 
 ```text
 Tests run: 53, Failures: 0, Errors: 0, Skipped: 1
 BUILD SUCCESS
 ```
 
-Ese fue el resultado de la revisión actual en Windows: **52 pruebas aprobadas y una
-omitida por requerir permisos POSIX**. El número puede crecer con futuras tareas.
+Ese resultado corresponde a **52 pruebas aprobadas y una omitida por requerir permisos
+POSIX**. P4 llegó después a 71 casos en Windows; la revisión vigente registra 77 en
+Fedora y todavía debe repetirse en Windows. Ver [docs/verificacion.md](docs/verificacion.md).
 
 Comprueba el artefacto:
 
@@ -227,8 +236,9 @@ también deben usar ese puerto.
 
 ## 7. Primera comprobación: la demo del protocolo
 
-Con la configuración predeterminada, la sección **Visor de tiles preparados** debe
-mostrar `demo_numeros`.
+Para esta prueba, elegir `demo_numeros` en **Tu imagen** y abrir **Diagnóstico del
+protocolo → Compatibilidad de catálogo plano / demo sintética**. El segmento antiguo
+«Visor de tiles preparados» fue eliminado; el inicio prefiere imágenes del usuario.
 
 Deberías ver:
 
@@ -241,7 +251,7 @@ Deberías ver:
 Terminada: 12/12 confirmados; 0 fallidos. Puede volver a cargar la región.
 ```
 
-Si hay otra imagen seleccionada, elige `demo_numeros` y usa **Cargar región**.
+Si hay otra imagen seleccionada, elige `demo_numeros` y usa **Actualizar vista**.
 
 En **Diagnóstico del protocolo** puedes observar `fetch_tiles`, `tile_data`,
 `ack_tile` y `request_complete`. Activar **Omitir un ACK** y volver a cargar prueba
@@ -254,8 +264,8 @@ es sintética y no representa el PNG que vas a seleccionar arriba.
 
 ### Paso A — Elegir e inspeccionar: P1
 
-1. Ve a **Abrir una imagen de tu equipo**.
-2. Pulsa **Elegir PNG** y selecciona un archivo pequeño compatible.
+1. Ve a **Abre tu PNG**.
+2. Pulsa **Elegir archivo PNG** y selecciona un archivo pequeño compatible.
 3. Conserva **256 px** como tamaño de tile para la primera prueba.
 4. Espera el resultado de inspección.
 
@@ -276,9 +286,9 @@ En este punto todavía **no se ha registrado ni transferido el PNG completo**.
 
 ### Paso B — Registrar el ID: P2
 
-1. En **Identificador del registro**, escribe por ejemplo `prueba_windows_01`.
+1. En **Identificador**, escribe por ejemplo `prueba_windows_01`.
 2. Usa letras, números, guion o guion bajo, sin espacios ni extensiones obligatorias.
-3. Pulsa **Registrar imagen · P2**.
+3. Pulsa **Registrar imagen**.
 
 **Qué deberías ver:**
 
@@ -286,12 +296,12 @@ En este punto todavía **no se ha registrado ni transferido el PNG completo**.
 Registrada prueba_windows_01: pending. ...
 ```
 
-El ID aparece en el catálogo. Si lo seleccionas y pulsas **Consultar estado**:
+El ID se selecciona automáticamente. Al pulsar **Consultar estado**:
 
 - Estado `pending`.
 - Cero tiles procesados.
 - Mensaje indicando que falta el original/procesamiento.
-- **Cargar región** deshabilitado.
+- **Actualizar vista** deshabilitado mientras no esté `ready`.
 
 En disco existe `<GTP_WORK>/prueba_windows_01/meta.json`. Los niveles de la metadata
 son todavía **previstos**, no archivos generados.
@@ -303,7 +313,7 @@ con ese registro, conserva el ID y pasa a P3; no necesitas registrarlo de nuevo.
 
 Con el mismo PNG seleccionado y el mismo ID escrito, pulsa:
 
-**Transferir / reanudar y procesar · P3**
+**Transferir y preparar imagen**
 
 El recorrido esperado es:
 
@@ -350,10 +360,10 @@ Ejemplo ilustrativo: un PNG de **300 × 280** con tiles de **256** produce:
 
 Tu cantidad real depende de las dimensiones y del tamaño de tile seleccionado.
 
-**Lo esperado ahora no es que aparezca tu imagen completa en el visor de abajo.**
-El mensaje de transporte multinivel pendiente de P5 y el botón **Cargar región**
-deshabilitado son coherentes con este avance. Puedes seguir usando `demo_numeros`
-para probar GTP y comprobar los tiles de tu imagen en disco.
+**Ahora la imagen debe aparecer en el canvas**, completa a resolución reducida si
+sus dimensiones lo requieren. Usa Ajustar, 1:1, rueda y arrastre para recorrerla.
+El respaldo queda protegido y el progreso cuenta tiles visibles decodificados.
+La descarga no transmite todo el original a resolución nativa para una vista general.
 
 ## 9. Ver el estado por HTTP y comprobar los archivos
 
@@ -408,21 +418,23 @@ significa por sí solo que el procesamiento haya quedado incompleto: consulta el
 
 ### Detener una subida
 
-Pulsa **Detener transferencia / procesamiento**. Se conservan los bloques recibidos.
-Para continuar, selecciona el **mismo archivo**, escribe el **mismo ID** y pulsa P3.
+Pulsa **Detener**. Se conservan los bloques recibidos.
+Para continuar, selecciona el **mismo archivo**, escribe el **mismo ID** y pulsa
+**Transferir y preparar imagen**.
 El servidor informa el offset y el cliente continúa desde allí.
 
 ### Cancelar el procesamiento
 
 El mismo botón solicita interrumpir el decoder. El registro termina en `failed`
-con una causa. Puedes reintentar P3 cuando ya haya terminado la cancelación.
+con una causa. Puedes pulsar **Transferir y preparar imagen** de nuevo cuando haya
+terminado la cancelación.
 
 **La subida sí se reanuda por offset; el procesamiento se reinicia desde el comienzo
 del PNG.** Todavía no hay recuperación del estado interno de Deflate a mitad de imagen.
 
 ### Corregir una copia subida incorrecta
 
-Para un registro pendiente/fallido, **Reiniciar transferencia del ID** descarta la
+Para un registro pendiente/fallido, **Reiniciar transferencia** descarta la
 copia recibida y permite subirla de nuevo. Si vas a cambiar de original, lo más claro
 es crear otro ID. Una cabecera y un tamaño iguales no demuestran igualdad de contenido.
 
@@ -476,13 +488,13 @@ no necesita crear una copia `source.part`.
 | La página parece anterior a los cambios | Detener Java, recompilar, arrancar el JAR nuevo y recargar con Ctrl+F5. |
 | El catálogo anterior desapareció | Comprobar que `GTP_WORK` sea la misma ruta del arranque anterior. |
 | `Cabecera válida`, pero sin preview | Revisar límites de 4 Mpx/16 MiB; también puede haber un cuerpo PNG corrupto pese a un IHDR válido. |
-| Registro duplicado | Usar otro ID para otra imagen; para continuar el mismo registro, pasar directamente a P3. |
-| `pending` después de registrar | Es correcto. Falta pulsar P3 y completar la entrada del original. |
+| Registro duplicado | Usar otro ID para otra imagen; para continuar el mismo registro, pulsar **Transferir y preparar imagen**. |
+| `pending` después de registrar | Es correcto. Falta pulsar **Transferir y preparar imagen** y completar la entrada del original. |
 | Error por 16 bits o Adam7 | Esa variante todavía no está soportada por P3; puede inspeccionarse/registrarse, pero no procesarse. |
 | `failed` durante ingesta | Consultar la causa en el panel o `/status`: integridad, E/S, disco o cancelación. |
 | Otra ingesta/escritura activa | Esperar o cancelar el trabajo propietario; hay un único procesamiento por work. |
 | Espacio insuficiente | Elegir un disco con espacio para copia, pirámide y banda temporal; conservar el original. |
-| `ready`, pero Cargar región deshabilitado | Esperado para pirámides P3: el transporte multinivel y el visor completo corresponden a P5/P6. |
+| `ready`, pero Actualizar vista deshabilitado | Revisar conexión y JAR actualizado; recargar recursos. No es el comportamiento esperado para pirámides listas. |
 
 ## 13. Verificaciones automatizadas opcionales
 
@@ -506,8 +518,10 @@ $env:BROWSER_CHANNEL = 'msedge'
 node scripts/verify-browser.cjs .build/server.jar
 ```
 
-El script arranca su propio servidor y comprueba P1/P2/P3 más el recorrido GTP de
-la demo. Debería imprimir `PASS` y cerrar sus procesos de prueba.
+El script arranca su propio servidor y verifica el recorrido integrado, demo,
+respaldo/TTL, píxeles nativos, fragmentación, teclado/móvil y dos clientes.
+Debería imprimir `PASS` y cerrar sus procesos de prueba. El benchmark P7 se ejecuta
+según [docs/experimentos_p7.md](docs/experimentos_p7.md).
 
 ## 14. Qué considerar una prueba manual exitosa hoy
 
@@ -515,17 +529,19 @@ la demo. Debería imprimir `PASS` y cerrar sus procesos de prueba.
 2. La demo muestra 12 tiles confirmados sin fallos.
 3. Seleccionas un PNG compatible y obtienes informe P1.
 4. Lo registras como `pending` con un ID propio.
-5. Pulsas P3, se transfiere/procesa y llega a `ready`.
+5. Pulsas **Transferir y preparar imagen**; se transfiere/procesa y llega a `ready`.
 6. Los conteos coinciden y encuentras los PNG por nivel en work.
 7. Reinicias con el mismo work y el registro conserva su estado.
-8. Puedes volver a la demo y seguir probando el protocolo.
+8. Navegas tu imagen con Ajustar/1:1/pan/zoom y observas respaldo/progreso/TTL.
+9. Puedes volver a la demo en Diagnóstico y seguir probando recuperación.
 
-Ese es el punto funcional actual. El siguiente tramo conecta las pirámides con
-calidades progresivas, transporte multinivel y navegación normal de pan/zoom, además
-de validar originales reales y repetir las pruebas nuevas en Fedora.
+El siguiente tramo valida originales gigantes, legibilidad y RAM/disco, repite
+la última revisión en Windows y amplía los ensayos P7. No está integrada una
+adaptación automática q0→q3 ni se declara evaluación completa del original de 93 GB.
 
 ### Referencias del proyecto
 
+- [RFC interno GTP-001 — solución implementada](protocolo.md).
 - [Guía general de inicio y diagnóstico](GUIA_INICIO_Y_PRUEBAS.md).
 - [Ingesta P3: contrato, almacenamiento y límites](docs/ingesta_p3.md).
 - [Resultados de verificación por ambiente](docs/verificacion.md).

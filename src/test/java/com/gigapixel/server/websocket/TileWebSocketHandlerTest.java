@@ -34,7 +34,7 @@ class TileWebSocketHandlerTest {
     private final AtomicLong clock = new AtomicLong();
     private MetadataService metadata;
     private TileService tiles;
-    private TileWebSocketHandler handler;
+    private TileWebSocketHandlerV2 handler;
 
     @BeforeEach
     void setup() throws Exception {
@@ -42,7 +42,7 @@ class TileWebSocketHandlerTest {
                 directory.resolve("work").toString()), true);
         tiles = mock(TileService.class);
         when(tiles.readTile(any())).thenReturn(new byte[]{1, 2, 3});
-        handler = new TileWebSocketHandler(mapper, metadata, tiles, Runnable::run, clock::get);
+        handler = new TileWebSocketHandlerV2(mapper, metadata, tiles, Runnable::run, clock::get);
     }
 
     @AfterEach
@@ -232,7 +232,7 @@ class TileWebSocketHandlerTest {
     @Test
     void blockedTileReadInOneClientDoesNotBlockAnotherClientOrScheduler() throws Exception {
         handler.shutdown();
-        handler = new TileWebSocketHandler(mapper, metadata, tiles, Executors.newVirtualThreadPerTaskExecutor(), clock::get);
+        handler = new TileWebSocketHandlerV2(mapper, metadata, tiles, Executors.newVirtualThreadPerTaskExecutor(), clock::get);
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         CountDownLatch secondFinished = new CountDownLatch(1);
@@ -258,6 +258,92 @@ class TileWebSocketHandlerTest {
         } finally {
             release.countDown();
         }
+    }
+
+    @Test
+    void fragmentsRespectWindowAndReconstruct5000BytesExactly() throws Exception {
+        byte[] payload = new byte[5000];
+        new java.util.Random(42).nextBytes(payload);
+        when(tiles.readTile(any())).thenReturn(payload);
+        Client client = client("fragments");
+        ObjectNode fetch = request("fetch_tiles").put("request_id", "f").put("imageId", MetadataService.DEMO_ID)
+                .put("transfer_window_bytes", 1500);
+        fetch.putArray("tiles").addObject().put("x", 0).put("y", 0);
+        send(client, fetch);
+        var reconstructed = new java.io.ByteArrayOutputStream();
+        for (int i = 0; i < 4; i++) {
+            JsonNode fragment = client.events("tile_fragment").get(i);
+            byte[] data = java.util.Base64.getDecoder().decode(fragment.path("data").asText());
+            assertEquals(i == 3 ? 500 : 1500, data.length);
+            assertEquals(reconstructed.size(), fragment.path("offset").asInt());
+            reconstructed.write(data);
+            // A premature tile ACK cannot release the reconstruction or grow the window.
+            if (i == 0) ack(client, fragment);
+            ObjectNode confirmation = request("ack_fragment").put("request_id", "f")
+                    .put("transfer_id", fragment.path("transfer_id").asText()).put("tile_id", fragment.path("tile_id").asText())
+                    .put("attempt", 1).put("offset", reconstructed.size());
+            send(client, confirmation);
+            send(client, confirmation); // Duplicate fragment ACK must not advance twice.
+        }
+        assertArrayEquals(payload, reconstructed.toByteArray());
+        ack(client, client.last("tile_fragment"));
+        assertEquals(1, client.last("request_complete").path("acknowledged").asInt());
+        assertEquals(0, client.last("transfer_state").path("fragment_in_flight_bytes").asInt());
+        assertEquals(4, client.events("tile_fragment").size());
+    }
+
+    @Test
+    void missingFragmentAckRetriesAndCancellationStopsFragmentTransfer() throws Exception {
+        when(tiles.readTile(any())).thenReturn(new byte[5000]);
+        Client client = client("fragment-retry");
+        ObjectNode fetch = request("fetch_tiles").put("request_id", "f").put("imageId", MetadataService.DEMO_ID)
+                .put("transfer_window_bytes", 1500);
+        fetch.putArray("tiles").addObject().put("x", 0).put("y", 0);
+        send(client, fetch);
+        clock.set(1000);
+        handler.checkTimeouts();
+        assertEquals(2, client.events("tile_fragment").size());
+        assertEquals(2, client.last("tile_fragment").path("attempt").asInt());
+        assertEquals(0, client.last("tile_fragment").path("offset").asInt());
+        send(client, request("cancel_request").put("request_id", "f"));
+        clock.set(30000);
+        handler.checkTimeouts();
+        assertEquals(2, client.events("tile_fragment").size());
+    }
+
+    @Test
+    void partialCancellationReleasesInFlightAndCompletesWithoutRetries() throws Exception {
+        Client client = client("partial");
+        fetch(client, "a", 2, false);
+        JsonNode first = client.events("tile_data").getFirst();
+        ObjectNode cancel = request("cancel_tiles").put("request_id", "a");
+        cancel.putArray("tiles").addObject().put("tile_id", first.path("tile_id").asText());
+        send(client, cancel);
+        ack(client, first);
+        ack(client, client.events("tile_data").getLast());
+        assertEquals(1, client.last("request_complete").path("cancelled").asInt());
+        assertEquals(1, client.last("request_complete").path("acknowledged").asInt());
+        clock.set(30000);
+        handler.checkTimeouts();
+        assertEquals(2, client.events("tile_data").size());
+    }
+
+    @Test
+    void decodedBudgetUsesDimensionsAndTooSmallBudgetTerminates() throws Exception {
+        Client client = client("decoded");
+        send(client, request("memory_pressure").put("current_usage", 0).put("memory_limit", 100)
+                .put("receiver_window_bytes", 256 * 256 * 4));
+        fetch(client, "a", 2, false);
+        assertEquals(1, client.events("tile_data").size());
+        ack(client, client.events("tile_data").getFirst());
+        assertEquals(2, client.events("tile_data").size());
+        ack(client, client.events("tile_data").getLast());
+        assertEquals(0, client.last("transfer_state").path("decoded_in_flight_bytes").asLong());
+        send(client, request("memory_pressure").put("current_usage", 0).put("memory_limit", 100)
+                .put("receiver_window_bytes", 100));
+        fetch(client, "b", 1, false);
+        assertEquals("receiver_budget_too_small", client.last("tile_error").path("code").asText());
+        assertEquals(1, client.last("request_complete").path("failed").asInt());
     }
 
     private ObjectNode request(String action) { return mapper.createObjectNode().put("version", 1).put("action", action); }

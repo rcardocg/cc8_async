@@ -14,6 +14,11 @@ let requestNumber = 0;
 let ackDropped = false;
 let protocolReady = false;
 let messageChain = Promise.resolve();
+const pyramid = new PyramidView(byId("pyramid-canvas"), () => loadRegion());
+let activeViewRequest = null;
+let viewGeneration = 0;
+const fragments = new Map();
+const activeTiles = new Set();
 
 let localFile = null;
 let inspectionText = null;
@@ -186,7 +191,9 @@ async function checkImageStatus() {
         if (!response.ok) throw new Error(`Estado HTTP ${response.status}`);
         const state = await response.json();
         if (byId("image").value !== id) return;
-        byId("catalog-status").textContent = `${id}: ${state.state}; ${state.processedTiles}/${state.totalTiles} tiles; ${state.message}${state.error ? `; ${state.error}` : ""}`;
+        byId("catalog-status").textContent = state.state === "ready"
+            ? `${id}: ready · ${state.processedTiles.toLocaleString("es")} bloques preparados.`
+            : `${id}: ${state.state}; ${state.processedTiles}/${state.totalTiles} tiles; ${state.message}${state.error ? `; ${state.error}` : ""}`;
     } catch (error) { byId("catalog-status").textContent = error.message; }
 }
 
@@ -207,7 +214,11 @@ byId("register-image").addEventListener("click", async () => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || `Registro HTTP ${response.status}`);
         await refreshCatalog();
-        if (generation === localGeneration) byId("registration-status").textContent = `Registrada ${id}: ${result.state}. Metadata guardada; falta transferir el original y generar tiles en P3.`;
+        if (generation === localGeneration) {
+            byId("image").value = id;
+            await selectImage();
+            byId("registration-status").textContent = `Registrada ${id}: ${result.state}. Ahora puedes transferir y preparar la imagen.`;
+        }
     } catch (error) {
         if (generation === localGeneration) byId("registration-status").textContent = error.message;
     } finally {
@@ -342,16 +353,23 @@ function clearView() {
     byId("tiles").replaceChildren();
     slots.clear();
     decoded.clear();
+    pyramid.release();
+    activeViewRequest = null;
+    viewGeneration++;
+    fragments.clear();
+    activeTiles.clear();
     byId("region").textContent = "Sin región solicitada.";
 }
 
 function cancelCurrent() {
     if (requestId) send({ action: "cancel_request", request_id: requestId });
     requestId = null;
+    fragments.clear();
+    activeTiles.clear();
 }
 
 function updateLoadButton() {
-    byId("load").disabled = !protocolReady || !metadata || metadata.state !== "ready" || metadata.maxZoom != null;
+    byId("load").disabled = !protocolReady || !metadata || metadata.state !== "ready";
 }
 
 async function selectImage() {
@@ -373,16 +391,55 @@ async function selectImage() {
         byId("y").max = Math.ceil(metadata.height / metadata.tileSize) - 1;
         byId("x").value = byId("y").value = 0;
         updateLoadButton();
+        const multilevel = metadata.maxZoom != null && metadata.state === "ready";
+        byId("pyramid-section").hidden = !multilevel;
+        byId("viewport").hidden = multilevel;
+        byId("x").disabled = byId("y").disabled = multilevel;
+        byId("compatibility-controls").hidden = multilevel || metadata.state !== "ready";
+        byId("compatibility-controls").open = !multilevel;
+        byId("viewer-empty").hidden = multilevel;
         if (metadata.state !== "ready") byId("status").textContent = `Imagen ${metadata.state}: todavía no tiene tiles preparados.`;
-        else if (metadata.maxZoom != null) byId("status").textContent = "Imagen multinivel: transporte pendiente de P5.";
+        else if (multilevel) { pyramid.open(metadata); byId("status").textContent = "Imagen preparada: arrastra o usa el zoom para navegar."; }
         else if (protocolReady) loadRegion();
     } catch (error) {
         if (generation === metadataGeneration) byId("status").textContent = error.message;
     }
 }
 
-function loadRegion() {
-    if (!metadata || metadata.state !== "ready" || metadata.maxZoom != null || !protocolReady || !byId("controls").reportValidity()) return;
+function loadRegion(force = false) {
+    if (!metadata || metadata.state !== "ready" || !protocolReady) return;
+    if (metadata.maxZoom != null) {
+        if (!pyramid.image) pyramid.open(metadata);
+        if (force) cancelCurrent();
+        if (requestId) {
+            const obsolete = [...activeTiles].filter(id => !pyramid.protects(id));
+            if (obsolete.length) {
+                send({ action: "cancel_tiles", request_id: requestId, tiles: obsolete.map(tile_id => ({ tile_id })) });
+                for (const id of obsolete) activeTiles.delete(id);
+                for (const [id, entry] of fragments) if (obsolete.includes(entry.tileId)) fragments.delete(id);
+            }
+            pyramid.progress();
+            return; // Keep useful in-flight work; the latest missing view is queued on completion.
+        }
+        viewGeneration++;
+        const tiles = pyramid.missing();
+        if (!tiles.length) { pyramid.progress(); byId("status").textContent = "Vista actual completa."; return; }
+        requestId = `view-${Date.now()}-${++requestNumber}`;
+        activeViewRequest = requestId;
+        activeTiles.clear();
+        tiles.forEach(tile => activeTiles.add(`${metadata.imageId}:${tile.z}:${tile.x}:${tile.y}:${tile.q}`));
+        ackDropped = false;
+        send({ action: "memory_pressure", current_usage: pyramid.bytes, memory_limit: pyramid.maxBytes,
+            receiver_window_bytes: Math.max(1024 * 1024, pyramid.maxBytes - pyramid.bytes) });
+        send({ action: "fetch_tiles", request_id: requestId, imageId: metadata.imageId, tiles, replace: true,
+            transfer_window_bytes: Number(byId("transfer-window").value) });
+        byId("region").textContent = `${tiles.length} tiles pendientes en nivel ${pyramid.z}; región visible; resolución final PNG.`;
+        byId("status").textContent = tiles[0].z === 0 && !pyramid.cache.has(pyramid.backupId)
+            ? "Cargando vista general de respaldo…" : "Completando el detalle de la región visible…";
+        pyramid.progress();
+        return;
+    }
+    if (!byId("controls").reportValidity()) return;
     const x = Number(byId("x").value);
     const y = Number(byId("y").value);
     if (!Number.isInteger(x) || !Number.isInteger(y)) return;
@@ -414,7 +471,8 @@ function loadRegion() {
             tiles.push({ x: tx, y: ty, z: null });
         }
     }
-    if (!send({ action: "fetch_tiles", request_id: requestId, imageId: metadata.imageId, tiles, replace: true })) {
+    if (!send({ action: "fetch_tiles", request_id: requestId, imageId: metadata.imageId, tiles, replace: true,
+        transfer_window_bytes: Number(byId("transfer-window").value) })) {
         requestId = null;
         byId("status").textContent = "Conexión cerrada. Reconecte para cargar la región.";
         return;
@@ -427,6 +485,7 @@ async function handleMessage(message, source) {
     if (source !== socket) return;
     if (message.version !== 1) throw new Error("Versión de protocolo no soportada");
     if (message.action === "ready") {
+        pyramid.ttlMs = message.out_of_view_ttl_ms || 5000;
         protocolReady = true;
         updateLoadButton();
         log(`← ready; Conectado: ${message.protocol}`);
@@ -439,22 +498,60 @@ async function handleMessage(message, source) {
         byId("metrics").textContent = `Ventana del receptor: ${message.receiver_window}; límite efectivo: ${message.max_tiles_concurrent}`;
         return;
     }
-    if (["request_cancelled", "cancel_ignored", "ack_ignored"].includes(message.action)) {
+    if (["request_cancelled", "cancel_tiles_accepted", "cancel_ignored", "ack_ignored"].includes(message.action)) {
         log(`← ${message.action}${traceIds(message)}`);
         return;
     }
     if (message.request_id && message.request_id !== requestId) return;
+    if (message.action === "tile_fragment") {
+        if (!Number.isInteger(message.size_bytes) || message.size_bytes <= 0 || message.size_bytes > 2 * 1024 * 1024 ||
+            !Number.isInteger(message.offset) || message.offset < 0) throw new Error("Fragmento inválido");
+        let entry = fragments.get(message.transfer_id);
+        if (!entry || entry.attempt !== message.attempt) {
+            if (message.offset !== 0) return;
+            const retained = [...fragments.values()].reduce((sum, item) => sum + item.bytes.length, 0);
+            if (retained + message.size_bytes > 4 * 1024 * 1024) throw new Error("Presupuesto de reconstrucción excedido");
+            entry = { bytes: new Uint8Array(message.size_bytes), offset: 0, attempt: message.attempt, tileId: message.tile_id };
+            fragments.set(message.transfer_id, entry);
+        }
+        const raw = atob(message.data);
+        if (raw.length !== message.fragment_bytes || message.offset + raw.length > entry.bytes.length || entry.tileId !== message.tile_id) {
+            throw new Error("Longitud o identidad de fragmento incorrecta");
+        }
+        if (message.offset === entry.offset) {
+            entry.bytes.set(Uint8Array.from(raw, c => c.charCodeAt(0)), message.offset);
+            entry.offset += raw.length;
+        } else if (message.offset + raw.length > entry.offset) return;
+        send({ action: "ack_fragment", request_id: requestId, transfer_id: message.transfer_id,
+            tile_id: message.tile_id, attempt: message.attempt, offset: message.offset + raw.length });
+        if (entry.offset !== entry.bytes.length) return;
+        fragments.delete(message.transfer_id);
+        let binary = "";
+        for (let i = 0; i < entry.bytes.length; i += 8192) binary += String.fromCharCode(...entry.bytes.subarray(i, i + 8192));
+        message = { ...message, action: "tile_data", data: btoa(binary) };
+    }
     if (message.action === "request_accepted") {
         log(`← request_accepted${traceIds(message)}; total=${message.total}`);
     } else if (message.action === "tile_data") {
         const activeRequest = requestId;
+        if (metadata?.maxZoom != null) {
+            const generation = viewGeneration;
+            await pyramid.consume(message);
+            if (source !== socket || activeRequest !== requestId || generation !== viewGeneration) return;
+            if (byId("drop-ack").checked && !ackDropped) {
+                ackDropped = true; log(`ACK omitido deliberadamente${traceIds(message)}`); return;
+            }
+            send({ action: "ack_tile", request_id: activeRequest, transfer_id: message.transfer_id, tile_id: message.tile_id });
+            activeTiles.delete(message.tile_id);
+            return;
+        }
         const slot = slots.get(message.tile_id);
         if (!slot || !activeRequest) return;
         log(`← tile_data${traceIds(message)}; intento=${message.attempt}; ${message.size_bytes} bytes comprimidos`);
         if (!decoded.has(message.tile_id)) {
             let url;
             try {
-                if (!["png", "jpeg"].includes(message.compression) || message.size_bytes > 512 * 1024) {
+                if (!["png", "jpeg"].includes(message.compression) || message.size_bytes > 2 * 1024 * 1024) {
                     throw new Error("Formato o tamaño de tile inválido");
                 }
                 const raw = atob(message.data);
@@ -493,7 +590,18 @@ async function handleMessage(message, source) {
         log(`← request_complete${traceIds(message)}; confirmados=${message.acknowledged}/${message.total}; fallidos=${message.failed}`);
         byId("status").textContent = `Terminada: ${message.acknowledged}/${message.total} confirmados; ${message.failed} fallidos. Puede volver a cargar la región.`;
         requestId = null;
+        activeTiles.clear();
+        if (metadata?.maxZoom != null) pyramid.progress(message.failed ? "No se pudo completar la vista. Usa Actualizar vista para reintentar." : "");
+        if (metadata?.maxZoom != null) byId("status").textContent = message.failed
+            ? "Vista incompleta. El respaldo se conserva; puedes reintentar con Actualizar vista."
+            : "Imagen disponible. Arrastra para explorar y acerca para ver el detalle.";
+        if (metadata?.maxZoom != null && message.failed === 0 && activeViewRequest === message.request_id && pyramid.missing().length) {
+            loadRegion();
+        }
     } else if (message.action === "tile_error") {
+        activeTiles.delete(message.tile_id);
+        fragments.delete(message.transfer_id);
+        if (metadata?.maxZoom != null) pyramid.progress(`Tile no disponible: ${message.code}. El respaldo se conserva.`);
         const slot = slots.get(message.tile_id);
         if (slot && !decoded.has(message.tile_id)) {
             slot.textContent = message.message;
@@ -528,6 +636,8 @@ function connect() {
         if (connection !== socket) return;
         protocolReady = false;
         requestId = null;
+        fragments.clear();
+        activeTiles.clear();
         updateLoadButton();
         byId("status").textContent = "Desconectado. Use Reconectar para volver a solicitar la región.";
         log(`WebSocket cerrado: ${url.href}`);
@@ -535,7 +645,7 @@ function connect() {
     connection.onerror = () => { if (connection === socket) log("Error WebSocket"); };
 }
 
-byId("controls").addEventListener("submit", event => { event.preventDefault(); loadRegion(); });
+byId("controls").addEventListener("submit", event => { event.preventDefault(); loadRegion(true); });
 byId("image").addEventListener("change", selectImage);
 byId("cancel").addEventListener("click", () => {
     cancelCurrent();
@@ -543,6 +653,11 @@ byId("cancel").addEventListener("click", () => {
     byId("status").textContent = "Solicitud cancelada y región liberada.";
 });
 byId("reconnect").addEventListener("click", connect);
+byId("render-fit").addEventListener("click", () => pyramid.fit());
+byId("render-native").addEventListener("click", () => pyramid.native());
+byId("render-in").addEventListener("click", () => pyramid.zoom(2));
+byId("render-out").addEventListener("click", () => pyramid.zoom(0.5));
+byId("transfer-window").addEventListener("change", () => loadRegion(true));
 byId("report-memory").addEventListener("click", () => {
     if (!send({ action: "memory_pressure", current_usage: Number(byId("pressure").value) * 1024, memory_limit: 100 * 1024 })) {
         log("No se pudo enviar: conexión cerrada");
@@ -550,6 +665,12 @@ byId("report-memory").addEventListener("click", () => {
 });
 document.querySelectorAll("[data-dx]").forEach(button => button.addEventListener("click", () => {
     if (!metadata || !protocolReady) return;
+    if (metadata.maxZoom != null) {
+        pyramid.fitMode = false;
+        pyramid.cx += Number(button.dataset.dx) * metadata.tileSize * 2 ** (metadata.maxZoom - pyramid.z);
+        pyramid.cy += Number(button.dataset.dy) * metadata.tileSize * 2 ** (metadata.maxZoom - pyramid.z);
+        pyramid.clamp(); pyramid.refresh(); return;
+    }
     for (const axis of ["x", "y"]) {
         const field = byId(axis);
         field.value = Math.max(0, Math.min(Number(field.max), Number(field.value) + Number(button.dataset[`d${axis}`])));
@@ -566,6 +687,8 @@ async function start() {
             byId("status").textContent = "Catálogo vacío.";
             return;
         }
+        const preferred = images.find(id => id !== "demo_numeros");
+        if (preferred) byId("image").value = preferred;
         await selectImage();
         connect();
     } catch (error) {

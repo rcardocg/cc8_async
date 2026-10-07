@@ -1,5 +1,8 @@
 # Originales, directorio de trabajo y catálogo local
 
+Revisión documental: 2026-10-06. Arquitectura y decisiones de la solución:
+[RFC interno GTP-001](../protocolo.md). Esta guía conserva configuración y uso operativo.
+
 ## Configuración multiplataforma (P0)
 
 Se usan dos carpetas separadas, fuera del repositorio para archivos grandes:
@@ -10,6 +13,8 @@ Se usan dos carpetas separadas, fuera del repositorio para archivos grandes:
 | `GTP_WORK` | `images.directory` | `./data/work` | Catálogo y tiles preparados; debe permitir escritura |
 | `GTP_PORT` | `server.port` | `8081` | Puerto HTTP/WebSocket |
 | `GTP_INGEST_MEMORY_MIB` | `images.ingest-memory-mib` | `128` | Presupuesto de buffers/margen para P3 HTTP; limitado también por heap máximo |
+| `GTP_TILE_CACHE_BYTES` | `tiles.cache-bytes` | `52428800` | Límite de bytes codificados de caché compartida LFU |
+| `GTP_TILE_CACHE_TTL_MS` | `tiles.cache-ttl-ms` | `30000` | TTL por inactividad y periodo de envejecimiento de frecuencia |
 
 Al arrancar, `ImagesLayout` crea las carpetas que falten y resuelve sus rutas
 canónicas una vez. Comprueba lectura en ambas y escritura efectiva en el work
@@ -85,8 +90,9 @@ local, `/data/`, `/work/` y `/.build/` están ignorados por Git.
 **Corrección de alcance:** los originales del curso son PNG, no ZIP. No se
 implementan extracción de archivos ni lectores TIFF/PSB. El objetivo del visor
 es navegar normalmente con pan y zoom y refinar las regiones visibles. Para
-lograrlo con originales gigantes, primero se generarán tiles y niveles con
-memoria acotada. La navegación multinivel aún no está implementada en el visor.
+lograrlo con originales gigantes, primero se generan tiles y niveles con buffers
+de memoria acotados. La navegación multinivel está integrada para imágenes `ready`;
+queda validar originales gigantes, RAM total y legibilidad en el entorno del curso.
 
 El CLI se despacha antes de Spring. `inspect`, `ladder` e `ingest --dry-run` no crean
 directorios ni tiles. La inspección lee firma e IHDR (33 bytes), verifica CRC de IHDR, dimensiones,
@@ -95,8 +101,8 @@ sea distinta. **No verifica IDAT/IEND ni demuestra que todo el PNG sea decodific
 
 ### Abrir desde el navegador, sin rutas del proyecto
 
-Arrancar el servidor y abrir `http://localhost:8081/`. En **Abrir una imagen de tu
-equipo**, elegir un PNG mediante el explorador del sistema. Puede estar en cualquier
+Arrancar el servidor y abrir `http://localhost:8081/`. En **Abre tu PNG**,
+elegir un archivo mediante el explorador del sistema. Puede estar en cualquier
 carpeta, sin moverlo al repositorio ni configurar su ruta. El navegador usa
 `file.slice(0, 33)` y envía la cabecera a `POST /api/png/inspect`. Servidor y CLI
 comparten el mismo validador y cálculo de pirámide.
@@ -118,11 +124,11 @@ y navegación por arrastre/desplazamiento. No circula por GTP y no valida el
 preprocesador. En originales grandes se omite la vista para evitar abrirlos
 completos en RAM. La inspección de cabecera sigue disponible.
 
-El **visor de tiles preparados** conserva las pruebas del protocolo con la demo
-y catálogo existentes. Seleccionar un original arriba todavía no crea sus tiles.
-P1 abarca esta entrada visual más el CLI. P2 añade el botón **Registrar imagen**,
-persistencia y consulta de estado; la ingesta acotada corresponde a P3 y el visor
-multinivel a los pasos posteriores. Ver [registro_p2.md](registro_p2.md).
+Seleccionar el original solo lo inspecciona. **Registrar imagen** persiste metadata;
+**Transferir y preparar imagen** genera la pirámide. Cuando está `ready`, **Tu imagen**
+permite navegarla con canvas, pan/zoom y respaldo. Demo/catálogo plano quedan en
+Diagnóstico, sin segmento público «Visor de tiles preparados».
+Ver [registro_p2.md](registro_p2.md), [ingesta_p3.md](ingesta_p3.md) y [visor_p6.md](visor_p6.md).
 
 ### CLI para inventario y preflight
 
@@ -168,7 +174,7 @@ Los informes van a stdout; errores generales en JSON a stderr. `ladder` devuelve
 1 si algún archivo falla, pero mantiene el informe de los demás. Espacio estimado:
 RGBA8 de todos los niveles + 4096 bytes por tile, sin suponer un ratio de compresión.
 No es una reserva ni garantía de ocupación: compresión, precisión de 16 bits y
-overhead del sistema de archivos se medirán al implementar la ingesta. Dos filas
+overhead del sistema de archivos deben medirse con los originales reales. Dos filas
 son un **mínimo**, no el consumo máximo del decoder, la JVM o una banda de tiles.
 
 ### Pipeline PNG P3 inicial
@@ -225,7 +231,7 @@ bordes. Para JPEG se usa `format: "jpeg"` y extensión `.jpeg`.
 - `totalTiles = ceil(width/tileSize) * ceil(height/tileSize)`, calculado con `long`.
 - En el catálogo plano `maxZoom` debe ser `null`. Los registros P2 en `meta.json`
   tienen niveles previstos. P3 publica los niveles completos después de generarlos y validarlos.
-- PNG/JPEG; máximo 512 KiB comprimidos por tile; catálogo máximo 1 MiB.
+- PNG/JPEG; máximo 2 MiB codificados por tile; catálogo máximo 1 MiB.
 - Cabecera de imagen, formato y dimensiones verificadas antes de transferir.
 - Rutas normalizadas y resueltas para impedir salir del directorio mediante enlaces.
 
@@ -239,8 +245,8 @@ desde los enlaces externos incluidos en los PDFs durante la ejecución.
 
 El formato plano permite probar transferencia real sin cargar un original gigante
 en RAM y **requiere tiles preparados previamente**. P3 genera una pirámide en su
-propia estructura `tiles/{z}/{x}_{y}.png`; integrarla al transporte/visor corresponde
-a P5/P6. Falta validar el decoder inicial con los PNG gigantes reales del curso.
+propia estructura `tiles/{z}/{x}_{y}.png`, ya integrada al transporte/visor P5/P6.
+Falta validar el decoder con los PNG gigantes reales del curso.
 La validación de cabecera de un tile acota dimensiones; no prueba por sí sola que
 todo el archivo sea decodificable. El cliente confirma sólo después de decodificar.
 

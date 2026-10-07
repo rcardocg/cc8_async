@@ -3,44 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Explorador PNG — GTP/1</title>
+    <title>Atlas · Explorador de imágenes</title>
     <link rel="stylesheet" href="/viewer.css">
+    <script src="/pyramid-view.js" defer></script>
     <script src="/viewer.js" defer></script>
 </head>
 <body>
 <main>
     <header class="page-header">
-        <div><p class="eyebrow">GTP/1 · Laboratorio de imágenes</p><h1>Explorador PNG</h1>
-        <p>Elige un original de tu equipo, comprueba sus dimensiones y prepara las pruebas.</p></div>
-        <a href="#catalog-view">Ir al visor de tiles ↓</a>
+        <div class="brand"><span class="brand-mark" aria-hidden="true">A</span><div><p class="eyebrow">Atlas / GTP</p><h1>El detalle, a cualquier escala.</h1></div></div>
+        <a class="header-link" href="#image-workspace">Explorar imagen <span aria-hidden="true">↗</span></a>
     </header>
-    <section class="panel" aria-labelledby="open-heading">
-        <h2 id="open-heading">1. Abrir una imagen de tu equipo</h2>
-        <p>Inspeccionar y registrar envía solo 33 bytes. El procesamiento P3 es una acción separada: transfiere el PNG al servidor en bloques de hasta 1 MiB.</p>
+    <div class="workspace">
+    <aside class="panel source-panel" aria-labelledby="open-heading">
+        <p class="eyebrow">Origen</p>
+        <h2 id="open-heading">Abre tu PNG</h2>
+        <p class="muted">Prepara el original una vez. Recorre cada región sin cargar la imagen completa en el navegador.</p>
         <div class="file-controls">
-            <label class="file-picker">Elegir PNG <input id="local-file" type="file" accept="image/png,.png"></label>
-            <label>Tamaño de tile para estimar <select id="inspect-tile-size"><option value="256">256 px</option><option value="512">512 px</option></select></label>
+            <label class="file-picker">Elegir archivo PNG <input id="local-file" type="file" accept="image/png,.png"></label>
+            <label>Tamaño de bloque <select id="inspect-tile-size"><option value="256">256 px</option><option value="512">512 px</option></select></label>
             <button id="inspect-again" type="button" disabled>Volver a inspeccionar</button>
             <button id="download-inspection" type="button" disabled>Descargar informe JSON</button>
             <button id="clear-local" type="button">Cerrar archivo</button>
         </div>
-        <p id="local-status" role="status" aria-live="polite">Ningún archivo seleccionado.</p>
+        <p id="local-status" class="status-note" role="status" aria-live="polite">Ningún archivo seleccionado.</p>
         <dl id="inspection-summary" class="facts" hidden></dl>
         <p id="local-next" class="notice" hidden></p>
         <details id="inspection-details" hidden><summary>Informe técnico P1</summary><pre id="inspection-json"></pre></details>
         <div class="file-controls">
-            <label>Identificador del registro <input id="registration-id" type="text" maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" placeholder="mi_imagen"></label>
-            <button id="register-image" type="button" disabled>Registrar imagen · P2</button>
+            <label>Identificador <input id="registration-id" type="text" maxlength="64" pattern="[a-zA-Z0-9_-]{1,64}" placeholder="mi_imagen"></label>
+            <button id="register-image" type="button" disabled>Registrar imagen</button>
         </div>
-        <p id="registration-status" role="status">P2 guarda metadata y niveles previstos. Después puedes transferir y procesar con P3.</p>
+        <p id="registration-status" class="status-note" role="status">Registra el archivo antes de transferirlo. Su cabecera permite estimar los recursos necesarios.</p>
         <div class="file-controls">
-            <button id="ingest-image" type="button">Transferir / reanudar y procesar · P3</button>
-            <button id="stop-ingest" type="button" disabled>Detener transferencia / procesamiento</button>
-            <button id="reset-upload" type="button">Reiniciar transferencia del ID</button>
+            <button id="ingest-image" class="primary" type="button">Transferir y preparar imagen</button>
+            <button id="stop-ingest" type="button" disabled>Detener</button>
+            <button id="reset-upload" type="button">Reiniciar transferencia</button>
         </div>
-        <p id="ingest-status" role="status" aria-live="polite">Requiere un ID registrado y el mismo PNG seleccionado. PNG sin Adam7 de hasta 8 bits. El original local se conserva.</p>
+        <p id="ingest-status" class="status-note" role="status" aria-live="polite">PNG no entrelazado, hasta 8 bits. El original de tu equipo se conserva.</p>
         <div id="local-preview-section" hidden>
-            <h3>Vista previa local · PNG pequeño</h3>
+            <h3>Vista previa local</h3>
             <p>Esta vista no prueba la transferencia GTP. Se habilita hasta 4 megapíxeles y 16 MiB de archivo.</p>
             <nav aria-label="Zoom de vista previa">
                 <button id="preview-out" type="button" aria-label="Alejar">−</button>
@@ -51,48 +53,72 @@
             </nav>
             <div id="local-viewport" tabindex="0" aria-label="Vista previa; arrastra o desplázate para navegar"><img id="local-preview" alt="Vista previa del PNG seleccionado"></div>
         </div>
-    </section>
-    <section id="catalog-view" class="panel" aria-labelledby="catalog-heading">
-    <h2 id="catalog-heading">2. Visor de tiles preparados · prueba del protocolo</h2>
-    <p>Selecciona una imagen del catálogo del servidor. <strong>demo_numeros es una imagen sintética de prueba</strong>.
-        Los registros P2 aparecen como pendientes: solo las imágenes con tiles preparados pueden cargarse.</p>
-    <p id="connection">Origen HTTP y destino WebSocket pendientes.</p>
+    </aside>
+    <article id="image-workspace" class="panel image-panel" aria-labelledby="image-heading">
+    <div class="section-heading"><div><p class="eyebrow">Exploración</p><h2 id="image-heading">Tu imagen</h2></div><span class="live-badge">GTP/1 · local</span></div>
     <form id="controls">
-        <label>Imagen preparada <select id="image" required></select></label>
-        <label>Columna inicial <input id="x" type="number" min="0" step="1" value="0" required></label>
-        <label>Fila inicial <input id="y" type="number" min="0" step="1" value="0" required></label>
-        <button id="load" type="submit" disabled>Cargar región</button>
-        <button id="cancel" type="button">Cancelar</button>
+        <label class="image-picker">Imagen <select id="image" required></select></label>
+        <button id="load" type="submit" disabled>Actualizar vista</button>
+        <button id="cancel" type="button">Liberar vista</button>
         <button id="reconnect" type="button">Reconectar</button>
         <button id="refresh-catalog" type="button">Actualizar catálogo</button>
         <button id="check-image-status" type="button">Consultar estado</button>
     </form>
-    <p id="metadata">Consultando catálogo HTTP…</p>
-    <p id="catalog-status" role="status"></p>
-    <p>Columna/fila son índices de <strong>tiles (bloques de píxeles)</strong>, desde cero.
-        Un tile de 256 px en columna 1 empieza en el píxel X=256. Pase el cursor por un
-        bloque para consultar sus límites; los números de la demo son etiquetas sintéticas.</p>
-    <nav aria-label="Navegar por regiones">
-        <button type="button" data-dx="-4" data-dy="0">←</button>
-        <button type="button" data-dx="0" data-dy="-3">↑</button>
-        <button type="button" data-dx="0" data-dy="3">↓</button>
-        <button type="button" data-dx="4" data-dy="0">→</button>
-    </nav>
-    <p id="status" role="status">Desconectado</p>
-    <p id="region">Sin región solicitada.</p>
-    <div id="viewport" aria-label="Región solicitada de la imagen"><div id="tiles"></div></div>
-    <details>
+    <p id="metadata" class="metadata-line">Consultando imágenes…</p>
+    <p id="catalog-status" class="status-note" role="status"></p>
+    <p id="status" class="view-status" role="status">Conectando…</p>
+    <div id="viewer-empty" class="empty-view"><span aria-hidden="true">↗</span><h3>Una imagen. Todos sus detalles.</h3><p>Abre un PNG y prepara sus niveles para comenzar a explorar.</p></div>
+    <div id="pyramid-section" hidden>
+        <nav class="viewer-toolbar" aria-label="Navegación de imagen">
+            <div class="button-group"><button id="render-out" type="button" aria-label="Alejar imagen">−</button>
+            <button id="render-in" type="button" aria-label="Acercar imagen">+</button></div>
+            <button id="render-fit" type="button" title="Ajustar imagen (tecla 0)">Ajustar imagen</button>
+            <button id="render-native" type="button" title="Resolución nativa (tecla 1)">1:1</button>
+            <div class="button-group directional-controls">
+                <button type="button" data-dx="-4" data-dy="0" aria-label="Mover vista a la izquierda">←</button>
+                <button type="button" data-dx="0" data-dy="-3" aria-label="Mover vista arriba">↑</button>
+                <button type="button" data-dx="0" data-dy="3" aria-label="Mover vista abajo">↓</button>
+                <button type="button" data-dx="4" data-dy="0" aria-label="Mover vista a la derecha">→</button>
+            </div>
+            <span id="render-scale"></span>
+        </nav>
+        <canvas id="pyramid-canvas" tabindex="0" aria-label="Imagen; arrastra para navegar, rueda o teclas más y menos para zoom" aria-describedby="canvas-help"></canvas>
+        <div class="render-progress"><progress id="render-progress" max="1" value="0" aria-label="Cobertura de la región visible"></progress><span id="render-progress-label" role="status" aria-live="polite">Preparando vista…</span></div>
+        <p id="canvas-help" class="canvas-help">Arrastra para recorrer · Rueda para zoom al cursor · Flechas, +/−, 0 ajustar y 1 nativo con el visor enfocado.</p>
+    </div>
+    <details id="protocol-diagnostics" class="diagnostics">
         <summary>Diagnóstico del protocolo</summary>
+        <p id="connection" class="status-note">Origen HTTP y destino WebSocket pendientes.</p>
+        <p id="region" class="status-note">Sin región solicitada.</p>
+        <p id="render-memory" class="status-note"></p>
         <p>Los controles siguientes simulan fallos y presión de memoria para probar el protocolo.</p>
         <label><input id="drop-ack" type="checkbox"> Omitir un ACK (una sola vez por solicitud)</label>
+        <label>Ventana de fragmentos (bytes de payload)
+            <select id="transfer-window"><option value="0">Tile completo (TCP segmenta)</option><option value="1500">1500 bytes</option><option value="16000">16000 bytes</option></select>
+        </label>
         <label>Presión de memoria simulada
             <select id="pressure"><option value="20">20%</option><option value="70">70%</option><option value="90">90%</option></select>
         </label>
         <button id="report-memory" type="button">Enviar presión simulada</button>
         <p id="metrics">Sin métricas todavía.</p>
+        <details id="compatibility-controls" hidden>
+            <summary>Compatibilidad de catálogo plano / demo sintética</summary>
+            <p>Estas coordenadas son controles de diagnóstico para el catálogo antiguo, no la navegación de imágenes procesadas.</p>
+            <label>Columna inicial <input id="x" form="controls" type="number" min="0" step="1" value="0" required></label>
+            <label>Fila inicial <input id="y" form="controls" type="number" min="0" step="1" value="0" required></label>
+            <nav aria-label="Región de diagnóstico">
+                <button type="button" data-dx="-4" data-dy="0">←</button>
+                <button type="button" data-dx="0" data-dy="-3">↑</button>
+                <button type="button" data-dx="0" data-dy="3">↓</button>
+                <button type="button" data-dx="4" data-dy="0">→</button>
+            </nav>
+            <div id="viewport" aria-label="Región de diagnóstico"><div id="tiles"></div></div>
+        </details>
         <pre id="log" aria-label="Registro del protocolo"></pre>
     </details>
-    </section>
+    </article>
+    </div>
+    <footer class="page-footer"><span>Atlas · Servidor asíncrono de imágenes</span><span>Original en disco. Solo tu región en pantalla.</span></footer>
 </main>
 </body>
 </html>
